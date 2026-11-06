@@ -288,7 +288,8 @@ def main():
         sys.exit(1)
 
     # Build one ffmpeg command: each story = 3 images (5s each) + title overlay + voice
-    inputs, filters, audio_parts = [], [], []
+    inputs, filters = [], []
+    audio_labels = []
     idx = 0
     for si, (imgs, title_png, audio) in enumerate(segments):
         img_indices = []
@@ -318,12 +319,18 @@ def main():
         filters.append(
             f"[seg{si}][{title_idx}:v]overlay=(W-w)/2:H-h-90[sv{si}]")
         if audio_idx is not None:
-            audio_parts.append(f"[{audio_idx}:a]apad=whole_dur={STORY_SEC}[a{si}]")
+            # apad must live in `filters` itself, or [a{si}] never exists
+            filters.append(f"[{audio_idx}:a]apad=whole_dur={STORY_SEC}[a{si}]")
+            audio_labels.append(f"[a{si}]")
+        else:
+            # silent audio so the final audio concat always has nseg streams
+            filters.append(f"anullsrc=r=44100:cl=stereo,atrim=0:{STORY_SEC}[a{si}]")
+            audio_labels.append(f"[a{si}]")
     nseg = len(segments)
     vcat = "".join(f"[sv{i}]" for i in range(nseg))
     filters.append(f"{vcat}concat=n={nseg}:v=1:a=0[vout]")
-    if audio_parts:
-        acat = "".join(f"[a{i}]" for i in range(nseg))
+    if audio_labels:
+        acat = "".join(audio_labels)
         filters.append(f"{acat}concat=n={nseg}:v=0:a=1[aout]")
         amap = ["-map", "[aout]"]
     else:

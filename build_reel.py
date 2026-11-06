@@ -85,8 +85,7 @@ def openverse_images(query, n=8):
     try:
         r = requests.get("https://api.openverse.org/v1/images/",
                          params={"q": query, "page_size": 20,
-                                 "license_type": "commercial",
-                                 "source": "pexels,unsplash,pixabay"},
+                                 "license_type": "commercial"},
                          timeout=20)
         r.raise_for_status()
         out = []
@@ -292,8 +291,10 @@ def main():
     inputs, filters, audio_parts = [], [], []
     idx = 0
     for si, (imgs, title_png, audio) in enumerate(segments):
+        img_indices = []
         for p in imgs:
             inputs += ["-loop", "1", "-t", str(IMG_SEC), "-i", p]
+            img_indices.append(idx)
             idx += 1
         inputs += ["-loop", "1", "-t", str(STORY_SEC), "-i", title_png]
         title_idx = idx
@@ -304,16 +305,16 @@ def main():
             idx += 1
         else:
             audio_idx = None
-        # scale each image to 720x1280
-        base = si * N_IMG
-        for k in range(N_IMG):
-            v = base + k
+        # scale each image to 720x1280 (use the REAL input indices: title and
+        # audio inputs sit between stories, so images are NOT contiguous)
+        for v in img_indices:
             filters.append(
                 f"[{v}:v]scale={W}:{H}:force_original_aspect_ratio=increase,"
                 f"crop={W}:{H},setsar=1[v{v}]")
         # concat the 3 scaled images into one 15s segment
         filters.append(
-            f"[v{base}][v{base+1}][v{base+2}]concat=n=3:v=1:a=0[seg{si}]")
+            f"[v{img_indices[0]}][v{img_indices[1]}][v{img_indices[2]}]"
+            f"concat=n=3:v=1:a=0[seg{si}]")
         filters.append(
             f"[seg{si}][{title_idx}:v]overlay=(W-w)/2:H-h-90[sv{si}]")
         if audio_idx is not None:

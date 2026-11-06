@@ -74,18 +74,30 @@ def fetch_stories(feeds, limit=N_STORIES):
     return stories[:limit]
 
 
+# Only these Openverse providers: their CDNs allow server downloads.
+# Flickr (403) and Wikimedia (429) are blocked/rate-limited from GitHub runners.
+GOOD_HOSTS = ("images.pexels.com", "images.unsplash.com", "cdn.pixabay.com")
+
+
 def openverse_images(query, n=8):
-    """Free stock photos from Openverse (CC-licensed). Returns list of image URLs."""
+    """Free stock photos from Openverse (CC-licensed), only from reliable CDNs.
+    Returns list of image URLs."""
     try:
         r = requests.get("https://api.openverse.org/v1/images/",
-                         params={"q": query, "page_size": 20, "license_type": "commercial"},
+                         params={"q": query, "page_size": 20,
+                                 "license_type": "commercial",
+                                 "source": "pexels,unsplash,pixabay"},
                          timeout=20)
         r.raise_for_status()
         out = []
         for it in r.json().get("results", []):
             u = it.get("foreign_landing_url") and it.get("url")
-            if u and u.lower().endswith((".jpg", ".jpeg", ".png")):
-                out.append(u)
+            if not u or not u.lower().endswith((".jpg", ".jpeg", ".png")):
+                continue
+            host = u.split("/")[2].lower() if "://" in u else ""
+            if host not in GOOD_HOSTS:
+                continue
+            out.append(u)
             if len(out) >= n:
                 break
         return out

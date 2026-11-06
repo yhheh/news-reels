@@ -29,3 +29,10 @@ jobs:
             out/reel.mp4
             out/stories.json
           retention-days: 7
+      - name: Upload to YouTube
+        if: ${{ secrets.YOUTUBE_REFRESH_TOKEN != '' }}
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        run: python upload_youtube.py

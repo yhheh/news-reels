@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 import feedparser
 import requests
@@ -73,11 +74,11 @@ def fetch_stories(feeds, limit=N_STORIES):
     return stories[:limit]
 
 
-def openverse_images(query, n=N_IMG):
+def openverse_images(query, n=8):
     """Free stock photos from Openverse (CC-licensed). Returns list of image URLs."""
     try:
         r = requests.get("https://api.openverse.org/v1/images/",
-                         params={"q": query, "page_size": 10, "license_type": "commercial"},
+                         params={"q": query, "page_size": 20, "license_type": "commercial"},
                          timeout=20)
         r.raise_for_status()
         out = []
@@ -93,16 +94,67 @@ def openverse_images(query, n=N_IMG):
         return []
 
 
-def download(url, path):
-    try:
-        r = requests.get(url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
-        r.raise_for_status()
-        with open(path, "wb") as f:
-            f.write(r.content)
-        return os.path.getsize(path) > 5000
-    except Exception as ex:
-        print(f"download failed {url}: {ex}", file=sys.stderr)
-        return False
+def download(url, path, tries=3):
+    """Download with retries + browser-like headers (some hosts 403/429 bare requests)."""
+    headers = {
+        "User-Agent": ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                       "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"),
+        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        "Referer": "https://www.google.com/",
+    }
+    for attempt in range(tries):
+        try:
+            r = requests.get(url, timeout=30, headers=headers)
+            r.raise_for_status()
+            with open(path, "wb") as f:
+                f.write(r.content)
+            if os.path.getsize(path) > 5000:
+                return True
+        except Exception as ex:
+            print(f"download failed {url}: {ex} (attempt {attempt+1}/{tries})",
+                  file=sys.stderr)
+            time.sleep(2 * (attempt + 1))
+    return False
+
+
+def make_card_image(title, path, font_path):
+    """Fallback visual: a 720x1280 title card drawn with PIL (used when no
+    stock photo downloads). Guarantees every story has images so ffmpeg
+    never receives zero segments."""
+    from PIL import Image, ImageDraw, ImageFont
+    import arabic_reshaper
+    from bidi.algorithm import get_display
+    img = Image.new("RGB", (W, H), (18, 32, 54))
+    dr = ImageDraw.Draw(img)
+    # subtle vertical bands for texture
+    for x in range(0, W, 40):
+        dr.rectangle([x, 0, x + 20, H], fill=(24, 42, 68))
+    font = (ImageFont.truetype(font_path, 64) if font_path
+            else ImageFont.load_default())
+    words = title.split()
+    lines, cur = [], ""
+    tmp = Image.new("RGB", (10, 10))
+    tdr = ImageDraw.Draw(tmp)
+    for w in words:
+        t = (cur + " " + w).strip()
+        if tdr.textlength(get_display(arabic_reshaper.reshape(t)), font=font) <= W - 80:
+            cur = t
+        else:
+            if cur:
+                lines.append(cur)
+            cur = w
+    if cur:
+        lines.append(cur)
+    lines = lines[:4]
+    lh = 100
+    y = H // 2 - lh * len(lines) // 2
+    for ln in lines:
+        disp = get_display(arabic_reshaper.reshape(ln))
+        tw = tdr.textlength(disp, font=font)
+        dr.text(((W - tw) // 2, y), disp, font=font, fill=(255, 255, 255))
+        y += lh
+    img.save(path)
+    return path
 
 
 def get_font():
@@ -191,19 +243,24 @@ def main():
     for i, st in enumerate(stories):
         topic = topic_for(st["title"])
         urls = openverse_images(topic)
-        if len(urls) < N_IMG:
-            urls += openverse_images("news")[: N_IMG - len(urls)]
+        if len(urls) < 6:
+            urls += openverse_images("news")
         imgs = []
-        for j, u in enumerate(urls[:N_IMG]):
+        for j, u in enumerate(urls[:6]):
             p = os.path.join(ASSETS, f"s{i}_img{j}.jpg")
             if download(u, p):
                 imgs.append(p)
+            if len(imgs) >= N_IMG:
+                break
         # fallback: reuse any image we already have
         while len(imgs) < N_IMG and imgs:
             imgs.append(imgs[0])
         if not imgs:
-            print(f"story {i}: no images, skipping", file=sys.stderr)
-            continue
+            # last resort: generated title card, so the story is never skipped
+            card = os.path.join(ASSETS, f"s{i}_card.jpg")
+            make_card_image(st["title"], card, font)
+            imgs = [card, card, card]
+            print(f"story {i}: no stock photos, using title card", file=sys.stderr)
         title_png = os.path.join(ASSETS, f"s{i}_title.png")
         render_title_png(st["title"], title_png, font)
         # narration: title + short summary (fits ~12s)
@@ -214,6 +271,10 @@ def main():
             audio = None
         print(f"story {i}: {st['title'][:60]} | imgs={len(imgs)} | audio={'ok' if audio else 'NO'}")
         segments.append((imgs, title_png, audio))
+
+    if not segments:
+        print("ERROR: no story segments to render", file=sys.stderr)
+        sys.exit(1)
 
     # Build one ffmpeg command: each story = 3 images (5s each) + title overlay + voice
     inputs, filters, audio_parts = [], [], []

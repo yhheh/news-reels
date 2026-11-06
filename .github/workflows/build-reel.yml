@@ -1,0 +1,31 @@
+name: Build News Reel
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 6 times a day (UTC): 06:00, 10:00, 14:00, 18:00, 22:00, 02:00
+    - cron: "0 6,10,14,18,22,2 * * *"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -q -r requirements.txt
+      - name: Build the Reel
+        run: python build_reel.py
+      - name: Upload Reel as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: news-reel
+          path: |
+            out/reel.mp4
+            out/stories.json
+          retention-days: 7

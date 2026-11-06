@@ -1,0 +1,6 @@
+feedparser
+requests
+edge-tts
+pillow
+arabic-reshaper
+python-bidi

@@ -1,0 +1,8 @@
+# Build outputs (rebuilt every run; the workflow uploads them as artifacts)
+out/
+__pycache__/
+venv/
+# Media pool (pre-fetched stock visuals + rendered audio): too heavy to
+# commit, and it is rebuilt by scripts/prefetch_media.py on every run
+# (survives between runs via the Actions cache, not via git).
+data/media_pool/

@@ -1,10 +1,41 @@
 #!/usr/bin/env python3
-"""Auto news Reel builder.
-6 Arabic stories, 3 free stock images each, Arabic voice, vertical 9:16, ~90s.
-Free tools only. No RSS news-agency photos (copyright) - Openverse stock only.
+"""Auto news Reel builder (FULLY ENGLISH channel).
+6 English stories, 3 free stock visuals each, English voice, vertical 9:16.
+A brief 4s presenter interstitial (assets/presenter.mp4 — the presenter's
+own video, a silent clip) appears between stories: the next story's
+narration starts over the presenter, then the story visuals roll. Total
+≈125s (6x15s stories + 5x4s interstitials + 15s end CTA) — still a Short
+(< 3 min).
+Free tools only. No RSS news-agency photos/videos (copyright) - free stock only.
+Visual sources (in order): pooled clips/photos (data/media_pool/) ->
+Pixabay Videos API (PIXABAY_API_KEY) -> Pexels Videos API
+(PEXELS_API_KEY, dormant while Pexels pauses new keys) -> pooled photos
+-> live photos (Pexels -> Unsplash -> Openverse, keyless) -> PIL title
+card. Video clips are real moving footage; photos fill in when fewer
+than 3 usable clips are found for a story.
+Modes: default = general news (real English articles only).
+SMART_GLASSES_ONLY=1 => smart-glasses Reel: real smart-glasses news first,
+then built-in English template topics (rotating, generic/educational only)
+fill the remaining slots — the mode never depends on the feeds.
 Output: out/reel.mp4
+Background music: "Serene View" by Arulo (Mixkit, royalty-free, no
+attribution required — see assets/MUSIC.md) is mixed under the narration
+at volume 0.15; if the file is missing the build still succeeds, voice only.
+
+MEDIA POOL (data/media_pool/ + pool.json, filled by scripts/prefetch_media.py):
+visuals AND narration audio are picked from the pool FIRST, then the live
+APIs. Visuals: pooled clips/photos for the story's topic. Audio: only the
+fixed smart-glasses template scripts (and the fixed end CTA) can be pooled —
+their narration text is known in advance, so it is keyed by a hash of
+(voice + narration text); a changed script changes the hash and the audio
+is re-generated, never reused stale. NEWS narration is fresh every run
+(new articles), so it is always generated at build time, never pooled.
+On GitHub Actions the pool directory survives between runs via the Actions
+cache (see .github/workflows/build-reel.yml); without a cache hit the
+pre-fetch step rebuilds it. Pool files are never committed to the repo.
 """
 import calendar
+import hashlib
 import json
 import os
 import re
@@ -30,24 +61,239 @@ FONT_URL = ("https://github.com/google/fonts/raw/main/ofl/notonaskharabic/"
             "NotoNaskhArabic%5Bwght%5D.ttf")
 FONT_PATH = os.path.join(ASSETS, "NotoNaskhArabic.ttf")
 
-# Arabic keyword -> English stock-photo topic (Openverse search is English)
+# Media pool: pre-fetched visuals + pre-rendered template audio, filled by
+# scripts/prefetch_media.py. Builders READ the pool; only the pre-fetch
+# script writes it. pool.json entries: topic, kind ("photo"|"video"|"audio"),
+# local path (relative to BASE), source URL, provider, provider ID; audio
+# entries also carry script_hash + voice (see narration_hash).
+POOL_DIR = os.path.join(BASE, "data", "media_pool")
+POOL_INDEX = os.path.join(POOL_DIR, "pool.json")
+
+# End-CTA narration (identical in the Reel and the long video, so one pooled
+# audio file serves both). The on-screen CTA text is rendered separately.
+CTA_NARR = "For more news, visit our website: Breaking News"
+EN_VOICE = "en-US-AriaNeural"
+
+# Background music (Mixkit, royalty-free — see assets/MUSIC.md). Mixed UNDER
+# the narration at low volume; the voice stays dominant. The file is
+# committed in assets/music.mp3; MUSIC_URL is the build-time fallback.
+MUSIC_VOL = 0.15
+MUSIC_PATH = os.path.join(BASE, "assets", "music.mp3")
+MUSIC_URL = "https://assets.mixkit.co/music/443/443.mp3"
+
+# Presenter interstitials (assets/presenter.mp4 — the presenter's own video,
+# supplied by the user; fictional presenter in a studio, silent clip,
+# 15.04s, 720x1280, 24fps). A BRIEF 3-5s slice appears between story
+# segments — visual only. The news voice is the main audio throughout: the
+# NEXT story's narration starts over the presenter, then the story visuals
+# roll (the story segment skips those seconds — see a_start). There is NO
+# separate presenter voice line. Slices rotate so each interstitial shows a
+# different part of the clip. The clip has only ONE keyframe, so slices
+# must be cut by re-encoding (-ss before -i); stream-copy slicing would
+# always start at 0.
+PRESENTER_PATH = os.path.join(BASE, "assets", "presenter.mp4")
+PRESENTER_SEC = 4               # seconds per interstitial
+PRESENTER_SLICES = [(0.0, 4.0), (3.0, 7.0), (6.0, 10.0), (9.0, 13.0),
+                    (11.0, 15.0)]
+
+
+def make_segment(visuals, title_png, audio, dur, a_start=0.0, a_end=None):
+    """One render segment: visuals [(path, "video"|"image")], an optional
+    title overlay PNG (None = no overlay), optional narration audio path
+    (None = silent leg — the music bed still plays), duration in seconds,
+    and the narration window [a_start, a_end) taken from the audio file
+    (a_end None = to the end of the file). The audio leg is always padded
+    to `dur`, so a short or missing narration never breaks the concat."""
+    return {"visuals": visuals, "title": title_png, "audio": audio,
+            "dur": dur, "a_start": a_start, "a_end": a_end}
+
+
+def presenter_slice(k, prefix, target_w, target_h):
+    """Cut rotating slice k from the presenter clip into
+    out/assets/{prefix}_pres{k}.mp4 at target_w x target_h, 30fps.
+    Portrait target (720x1280, the Reels): direct cut — the clip fits.
+    Landscape target (1280x720, the long video): the vertical clip is
+    scaled to fit the height and centred over a blurred, darkened copy of
+    itself, so the presenter's face stays fully visible (a centre crop
+    would cut his head and shoulders). Returns the path, or None if the
+    presenter file is missing or ffmpeg fails (the caller then skips the
+    interstitials and the stories play with no audio skip)."""
+    if not (os.path.exists(PRESENTER_PATH)
+            and os.path.getsize(PRESENTER_PATH) > 10000):
+        return None
+    start, end = PRESENTER_SLICES[k % len(PRESENTER_SLICES)]
+    dur = end - start
+    out = os.path.join(ASSETS,
+                       f"{prefix}_pres{k % len(PRESENTER_SLICES)}.mp4")
+    if os.path.exists(out) and probe_duration(out) >= dur - 0.1:
+        return out
+    common = ["-c:v", "libx264", "-profile:v", "baseline", "-level", "3.0",
+              "-crf", "28", "-preset", "veryfast", "-pix_fmt", "yuv420p"]
+    if target_w > target_h:
+        # landscape: blurred-pad bake (face fully visible, no crop)
+        fc = (f"[0:v]fps=30,split[a][b];"
+              f"[a]scale={target_w}:{target_h}:force_original_aspect_ratio=increase,"
+              f"crop={target_w}:{target_h},gblur=sigma=30,"
+              f"eq=brightness=-0.25[bg];"
+              f"[b]scale=-2:{target_h}[fg];"
+              f"[bg][fg]overlay=(W-w)/2:0,setsar=1[v]")
+        cmd = (["ffmpeg", "-y", "-ss", str(start), "-t", str(dur),
+                "-an", "-i", PRESENTER_PATH,
+                "-filter_complex", fc, "-map", "[v]"] + common + [out])
+    else:
+        cmd = (["ffmpeg", "-y", "-ss", str(start), "-t", str(dur),
+                "-an", "-i", PRESENTER_PATH,
+                "-vf", "fps=30"] + common + [out])
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    if r.returncode != 0 or not os.path.exists(out):
+        print(f"presenter slice {k} failed: {r.stderr[-500:]}",
+              file=sys.stderr)
+        return None
+    print(f"  presenter slice {k}: {start:.0f}-{end:.0f}s -> "
+          f"{os.path.basename(out)}")
+    return out
+
+
+def presenter_segment(k, prefix, target_w, target_h, audio):
+    """A brief presenter interstitial segment (visual only): rotating slice
+    k of the presenter clip, PRESENTER_SEC long, no title overlay. Its
+    audio is the first PRESENTER_SEC of the NEXT story's narration
+    (`audio` — the next story's voice starts over the presenter, then the
+    story visuals roll); the following story segment must skip those
+    seconds (a_start=PRESENTER_SEC). Returns None if the presenter clip
+    is unavailable (the caller then uses no interstitials)."""
+    path = presenter_slice(k, prefix, target_w, target_h)
+    if path is None:
+        return None
+    return make_segment([(path, "video")], None, audio, PRESENTER_SEC,
+                        a_start=0.0, a_end=PRESENTER_SEC)
+
+# Smart-glasses filter (shared by the Reels smart-glasses mode and the
+# long-video builder): a story counts if its title+description contains
+# any of these words (matched on word boundaries, case-insensitive).
+SMART_GLASSES_WORDS = ["smart glasses", "smart glass", "augmented reality",
+                        "ar glasses", "vision pro", "ray-ban", "xreal", "meta",
+                        "mixed reality", "wearable", "wearables"]
+
+
+def _contains_any(text, words):
+    """True if text contains any word (word-boundary match, case-insensitive)."""
+    low = text.lower()
+    return any(re.search(r"\b" + re.escape(w.lower()) + r"\b", low)
+               for w in words)
+
+
+def is_smart_glasses(story):
+    """True if the story is about smart glasses / AR glasses."""
+    hay = (story.get("title", "") + " " + story.get("desc", ""))
+    return _contains_any(hay, SMART_GLASSES_WORDS)
+
+
+def _has_arabic(s):
+    return any("\u0600" <= ch <= "\u06ff" or "\u0750" <= ch <= "\u077f"
+               or "\ufb50" <= ch <= "\ufdff" or "\ufe70" <= ch <= "\ufeff"
+               for ch in s)
+
+
+def display_text(s):
+    """Text ready for PIL drawing: Arabic is reshaped + bidi-ordered;
+    Latin text (English titles, URLs) passes through unchanged."""
+    if _has_arabic(s):
+        import arabic_reshaper
+        from bidi.algorithm import get_display
+        return get_display(arabic_reshaper.reshape(s))
+    return s
+
+
+def fit_text(text, max_chars):
+    """Truncate text to max_chars at a word boundary (for narration)."""
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rsplit(" ", 1)[0]
+
+
+# Built-in smart-glasses topics (ENGLISH). The smart-glasses mode does NOT
+# depend on news feeds: each run picks topics from this list (rotating) and
+# builds segments from them; real smart-glasses news stories, when found,
+# are mixed in as extra segments. STRICT RULE: generic and educational only
+# — never invent news events, prices, release dates, or quotes. Every
+# sentence below is true in general terms.
+SMART_TOPICS = [
+    {"title": "What Are Smart Glasses?",
+     "script": "Smart glasses are wearable devices that look like ordinary glasses, but they contain tiny displays, cameras, microphones and speakers. They can show notifications, directions and translations in your field of view, take photos and videos without using your hands, and play audio without headphones. Unlike large virtual reality headsets, smart glasses are made to be worn all day. They keep you connected to digital information while you can still see the real world around you, which makes them useful for work, travel and everyday life."},
+    {"title": "How Augmented Reality Works",
+     "script": "Augmented reality, or AR, adds digital information to the real world. Smart glasses use cameras and sensors to understand the room or street around you, and a small display projects images, text or directions onto the lens. The glasses track how your head moves, so the digital content stays fixed in place as you look around. This lets you see a translation above a street sign, a recipe beside your cooking, or step-by-step directions floating on the road ahead, all without holding a phone."},
+    {"title": "Ray-Ban Meta Glasses",
+     "script": "Ray-Ban Meta glasses are camera glasses made by Meta together with Ray-Ban. They look like normal sunglasses, but they have a built-in camera, microphones and speakers. You can take photos and videos hands-free, listen to music and calls, and ask the built-in assistant questions using your voice. They connect to your phone, so photos and videos can be shared from the glasses. They are one of the best-known examples of smart glasses that people wear as everyday eyewear."},
+    {"title": "Apple Vision Pro",
+     "script": "Apple Vision Pro is Apple's mixed reality headset. It blends digital content with the real world using high-resolution displays, cameras and sensors. You can control it with your eyes, hands and voice, open apps in the space around you, watch films on a large virtual screen, or join video calls with a digital version of yourself. It is bigger and heavier than smart glasses, and it is designed for immersive experiences at home or at work rather than all-day wear outdoors."},
+    {"title": "Smart Glasses at Work",
+     "script": "In many jobs, smart glasses let workers keep both hands free. A technician can see repair instructions in front of their eyes, a warehouse worker can follow picking directions without holding a scanner, and a doctor can view patient information while examining someone. An expert far away can see what the worker sees through the glasses camera and guide them by voice. This saves time, reduces mistakes and helps train new workers faster, which is why factories, hospitals and field services are testing them."},
+    {"title": "Smart Glasses and Privacy",
+     "script": "Smart glasses have cameras and microphones, so privacy is one of the biggest questions around them. People nearby may not know when they are being recorded, which is why many glasses have a small light that turns on while recording. Rules about filming in public places are different in each country, and workplaces and schools often have their own policies. Designers are working on clearer signals, on-device processing and easy ways to switch the camera off, but the debate about privacy and smart glasses is far from over."},
+    {"title": "Smart Glasses for Sports and Travel",
+     "script": "For sport and travel, smart glasses can be surprisingly useful. A cyclist can see speed and directions without looking down at a phone, a runner can hear pace updates through built-in speakers, and a traveller can read translations of street signs in real time. They can also take photos and videos from your point of view while your hands stay free. Because they are light and look like normal glasses, they are easier to wear on a trip or a workout than carrying a phone or a camera."},
+    {"title": "The Future of Augmented Reality",
+     "script": "The future of augmented reality points towards glasses that are lighter, with longer battery life and a wider field of view. Companies are working on displays that look more natural, batteries that last a full day, and assistants that understand what you are looking at and help without being asked. One day, glasses could replace the phone screen for many tasks, from messages and maps to live translation. There is still a long way to go, but each new generation brings the technology closer to everyday use."},
+    {"title": "Smart Glasses vs VR Headsets",
+     "script": "Smart glasses and virtual reality headsets are often confused, but they do different things. Smart glasses add digital information to the real world, so you still see the street, your desk or the people around you. Virtual reality headsets block out the real world completely and replace it with a digital one, which is better for games and immersive films. Glasses are light and made for daily life, while headsets are heavier and made for focused sessions at home."},
+    {"title": "How to Choose Smart Glasses",
+     "script": "If you are thinking about smart glasses, a few things matter most. Comfort comes first, because you will wear them for hours, so weight and fit are important. Battery life decides how long you can use them without charging. Display quality affects how clearly you can read text, and the camera decides how good your photos and videos look. Check that they work with your phone, and look for clear privacy controls, like a recording light and a simple way to turn the camera off."},
+]
+
+
+def smart_rotation_seed():
+    """Rotation offset for picking SMART_TOPICS: from env
+    SMART_ROTATION_SEED (the workflow passes github.run_number) so every
+    run covers different topics; falls back to the UTC day number."""
+    raw = os.environ.get("SMART_ROTATION_SEED", "").strip()
+    if raw:
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+    import datetime
+    return datetime.datetime.utcnow().toordinal()
+
+
+def pick_smart_topics(n, seed=None):
+    """Pick n topics from SMART_TOPICS, rotating by seed (wraps around)."""
+    if seed is None:
+        seed = smart_rotation_seed()
+    start = seed % len(SMART_TOPICS)
+    return [SMART_TOPICS[(start + k) % len(SMART_TOPICS)] for k in range(n)]
+
+
+def template_story(topic):
+    """A built-in topic as a story-like dict (no news article behind it)."""
+    return {"title": topic["title"], "desc": topic["script"], "link": "",
+            "ts": 0, "template": True}
+
+
+# English keyword -> English stock-photo/video topic (the channel is fully
+# English now: English feeds, English titles, English voice).
 TOPICS = [
-    (["كرة", "مباراة", "دوري", "هدف", "منتخب", "لاعب", "رياض"], "football stadium"),
-    (["اقتصاد", "أسعار", "دولار", "ذهب", "بورصة", "أسهم", "نفط"], "economy money"),
-    (["طقس", "أمطار", "حرارة", "عاصفة", "ثلوج"], "weather rain"),
-    (["صحة", "مرض", "مستشفى", "دواء", "لقاح"], "health hospital"),
-    (["تكنولوجيا", "ذكاء اصطناعي", "هاتف", "إنترنت"], "technology computer"),
-    (["تعليم", "مدرسة", "جامعة", "طلاب"], "education school"),
-    (["حرب", "جيش", "قصف", "عسكري"], "military conflict"),
-    (["انتخاب", "رئيس", "حكومة", "برلمان", "وزير"], "politics government"),
-    (["فن", "موسيقى", "سينما", "ممثل"], "concert music"),
-    (["سياحة", "سفر", "طيران", "فندق"], "travel airplane"),
+    # Smart glasses first: topic_for() returns the first match, and these
+    # stories must get smart-glasses visuals (dazzling photos/video clips),
+    # not generic tech ones. Used by the Reels and by the long smart-glasses video.
+    (["smart glasses", "smart glass", "augmented reality", "ar glasses", "vision pro", "ray-ban", "xreal", "mixed reality"], "smart glasses augmented reality"),
+    (["football", "soccer", "match", "league", "goal", "player", "championship", "cup", "tournament"], "football stadium"),
+    (["economy", "dollar", "gold", "stock market", "shares", "oil", "inflation", "interest rate", "economy"], "economy money"),
+    (["weather", "rain", "storm", "snow", "heatwave", "temperature", "flood"], "weather rain"),
+    (["health", "disease", "hospital", "medicine", "vaccine", "doctor", "flu"], "health hospital"),
+    (["technology", "artificial intelligence", "phone", "internet", "robot", "chip", "software"], "technology computer"),
+    (["education", "school", "university", "students", "teacher", "exam"], "education school"),
+    (["war", "army", "military", "strike", "attack", "missile", "soldier"], "military conflict"),
+    (["election", "president", "government", "parliament", "minister", "vote", "senate"], "politics government"),
+    (["music", "concert", "cinema", "film", "actor", "artist", "song"], "concert music"),
+    (["travel", "tourism", "flight", "airport", "hotel", "tourist", "visa"], "travel airplane"),
 ]
 
 
 def topic_for(title):
     for words, topic in TOPICS:
-        if any(w in title for w in words):
+        if _contains_any(title, words):
             return topic
     return "news city"
 
@@ -105,8 +351,180 @@ def openverse_images(query, n=8):
         return []
 
 
-def download(url, path, tries=3):
-    """Download with retries + browser-like headers (some hosts 403/429 bare requests)."""
+def pexels_images(query, n=8, orientation=None):
+    """Free stock photos from the Pexels API (direct, reliable).
+    Key from env PEXELS_API_KEY; no key => [] (caller falls back).
+    orientation: None (any, default — the Reels) or "landscape" (long video).
+    Returns list of image URLs (images.pexels.com only)."""
+    key = os.environ.get("PEXELS_API_KEY", "").strip()
+    if not key:
+        return []
+    params = {"query": query, "per_page": 15}
+    if orientation:
+        params["orientation"] = orientation
+    try:
+        r = requests.get("https://api.pexels.com/v1/search",
+                         params=params,
+                         headers={"Authorization": key},
+                         timeout=20)
+        r.raise_for_status()
+        out = []
+        for ph in r.json().get("photos", []):
+            src = (ph.get("src") or {})
+            u = src.get("large") or src.get("medium") or src.get("original")
+            if not u:
+                continue
+            host = u.split("/")[2].lower() if "://" in u else ""
+            if host != "images.pexels.com":
+                continue
+            out.append(u)
+            if len(out) >= n:
+                break
+        return out
+    except Exception as ex:
+        print(f"pexels failed ({query}): {ex}", file=sys.stderr)
+        return []
+
+
+def unsplash_images(query, n=8):
+    """Free stock photos from the Unsplash API (direct).
+    Key from env UNSPLASH_ACCESS_KEY; no key => [] (caller falls back).
+    Returns list of image URLs (images.unsplash.com only)."""
+    key = os.environ.get("UNSPLASH_ACCESS_KEY", "").strip()
+    if not key:
+        return []
+    try:
+        r = requests.get("https://api.unsplash.com/search/photos",
+                         params={"query": query, "per_page": 15},
+                         headers={"Authorization": f"Client-ID {key}"},
+                         timeout=20)
+        r.raise_for_status()
+        out = []
+        for ph in r.json().get("results", []):
+            urls = (ph.get("urls") or {})
+            u = urls.get("regular") or urls.get("small") or urls.get("raw")
+            if not u:
+                continue
+            host = u.split("/")[2].lower() if "://" in u else ""
+            if host != "images.unsplash.com":
+                continue
+            out.append(u)
+            if len(out) >= n:
+                break
+        return out
+    except Exception as ex:
+        print(f"unsplash failed ({query}): {ex}", file=sys.stderr)
+        return []
+
+
+def pexels_videos(query, n=6, orientation="portrait"):
+    """Free stock VIDEO clips from the Pexels Videos API (direct, reliable).
+    Same key as photos (env PEXELS_API_KEY); no key => [] (caller falls back).
+    orientation: "portrait" (default — the vertical Reels) or "landscape"
+    (the 16:9 long video). Returns list of direct mp4 file URLs
+    (videos.pexels.com only). Per video, picks the best file: the requested
+    orientation preferred, height closest to H, must have a direct mp4 link."""
+    key = os.environ.get("PEXELS_API_KEY", "").strip()
+    if not key:
+        return []
+    try:
+        r = requests.get("https://api.pexels.com/v1/videos/search",
+                         params={"query": query, "per_page": 8,
+                                 "orientation": orientation, "size": "medium"},
+                         headers={"Authorization": key},
+                         timeout=20)
+        r.raise_for_status()
+        out = []
+        for vid in r.json().get("videos", []):
+            best, best_score = None, None
+            for f in vid.get("video_files", []) or []:
+                link = f.get("link") or ""
+                if not link or not link.lower().endswith(".mp4"):
+                    continue
+                host = link.split("/")[2].lower() if "://" in link else ""
+                if host != "videos.pexels.com":
+                    continue
+                w = f.get("width") or 0
+                h = f.get("height") or 0
+                if not w or not h:
+                    continue
+                # score: requested orientation first, then height closest to H
+                if orientation == "landscape":
+                    score = (1000 if w > h else 0) - abs(h - H)
+                else:
+                    score = (1000 if h > w else 0) - abs(h - H)
+                if best_score is None or score > best_score:
+                    best, best_score = link, score
+            if best:
+                out.append(best)
+            if len(out) >= n:
+                break
+        return out
+    except Exception as ex:
+        print(f"pexels videos failed ({query}): {ex}", file=sys.stderr)
+        return []
+
+
+def pixabay_videos(query, n=6, orientation="portrait"):
+    """Free stock VIDEO clips from the Pixabay Videos API (direct).
+    Key from env PIXABAY_API_KEY (the key shown on pixabay.com/api/docs/;
+    one key covers both the image and the video search); no key => []
+    (caller falls back). Pexels stopped issuing new keys (2026-11-12),
+    so Pixabay is the FIRST live video source; Pexels videos stay in the
+    chain behind it and work again if Pexels resumes.
+    orientation: "portrait" (default — the vertical Reels) or "landscape"
+    (the 16:9 long video). Returns list of direct mp4 file URLs
+    (cdn.pixabay.com only). Per video, picks the best file: the requested
+    orientation preferred, height closest to H, must have a direct mp4 link.
+    Pixabay rules: cache responses 24h; download the files (no permanent
+    hotlinking). Free limit: 100 requests / 60 seconds."""
+    key = os.environ.get("PIXABAY_API_KEY", "").strip()
+    if not key:
+        return []
+    params = {"key": key, "q": query, "video_type": "all",
+              "orientation": ("vertical" if orientation != "landscape"
+                              else "horizontal"),
+              "per_page": 10, "order": "popular", "safesearch": "true"}
+    try:
+        r = requests.get("https://pixabay.com/api/videos/",
+                         params=params, timeout=20)
+        r.raise_for_status()
+        out = []
+        for hit in r.json().get("hits", []):
+            best, best_score = None, None
+            for f in (hit.get("videos") or {}).values():
+                if not isinstance(f, dict):
+                    continue
+                link = f.get("url") or ""
+                if not link or not link.lower().endswith(".mp4"):
+                    continue
+                host = link.split("/")[2].lower() if "://" in link else ""
+                if host != "cdn.pixabay.com":
+                    continue
+                w = f.get("width") or 0
+                h = f.get("height") or 0
+                if not w or not h:
+                    continue
+                # score: requested orientation first, then height closest to H
+                if orientation == "landscape":
+                    score = (1000 if w > h else 0) - abs(h - H)
+                else:
+                    score = (1000 if h > w else 0) - abs(h - H)
+                if best_score is None or score > best_score:
+                    best, best_score = link, score
+            if best:
+                out.append(best)
+            if len(out) >= n:
+                break
+        return out
+    except Exception as ex:
+        print(f"pixabay videos failed ({query}): {ex}", file=sys.stderr)
+        return []
+
+
+def download(url, path, tries=3, min_bytes=5000):
+    """Download with retries + browser-like headers (some hosts 403/429 bare requests).
+    min_bytes: reject files smaller than this (photos: 5 KB; video clips: 100 KB)."""
     headers = {
         "User-Agent": ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
                        "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"),
@@ -115,11 +533,11 @@ def download(url, path, tries=3):
     }
     for attempt in range(tries):
         try:
-            r = requests.get(url, timeout=30, headers=headers)
+            r = requests.get(url, timeout=60, headers=headers)
             r.raise_for_status()
             with open(path, "wb") as f:
                 f.write(r.content)
-            if os.path.getsize(path) > 5000:
+            if os.path.getsize(path) > min_bytes:
                 return True
         except Exception as ex:
             print(f"download failed {url}: {ex} (attempt {attempt+1}/{tries})",
@@ -133,8 +551,6 @@ def make_card_image(title, path, font_path):
     stock photo downloads). Guarantees every story has images so ffmpeg
     never receives zero segments."""
     from PIL import Image, ImageDraw, ImageFont
-    import arabic_reshaper
-    from bidi.algorithm import get_display
     img = Image.new("RGB", (W, H), (18, 32, 54))
     dr = ImageDraw.Draw(img)
     # subtle vertical bands for texture
@@ -148,7 +564,7 @@ def make_card_image(title, path, font_path):
     tdr = ImageDraw.Draw(tmp)
     for w in words:
         t = (cur + " " + w).strip()
-        if tdr.textlength(get_display(arabic_reshaper.reshape(t)), font=font) <= W - 80:
+        if tdr.textlength(display_text(t), font=font) <= W - 80:
             cur = t
         else:
             if cur:
@@ -160,7 +576,7 @@ def make_card_image(title, path, font_path):
     lh = 100
     y = H // 2 - lh * len(lines) // 2
     for ln in lines:
-        disp = get_display(arabic_reshaper.reshape(ln))
+        disp = display_text(ln)
         tw = tdr.textlength(disp, font=font)
         dr.text(((W - tw) // 2, y), disp, font=font, fill=(255, 255, 255))
         y += lh
@@ -177,10 +593,10 @@ def get_font():
 
 
 def render_title_png(text, path, font_path, size=54, max_w=W - 60):
-    """Render Arabic title correctly (reshaped + bidi) onto a transparent PNG."""
+    """Render the title correctly onto a transparent PNG.
+    Arabic (news mode used to be Arabic) is reshaped + bidi-ordered;
+    English passes through unchanged (see display_text)."""
     from PIL import Image, ImageDraw, ImageFont
-    import arabic_reshaper
-    from bidi.algorithm import get_display
     font = ImageFont.truetype(font_path, size) if font_path else ImageFont.load_default()
     # wrap into lines that fit max_w
     words = text.split()
@@ -189,7 +605,7 @@ def render_title_png(text, path, font_path, size=54, max_w=W - 60):
     dr = ImageDraw.Draw(tmp)
     for w in words:
         t = (cur + " " + w).strip()
-        if dr.textlength(get_display(arabic_reshaper.reshape(t)), font=font) <= max_w:
+        if dr.textlength(display_text(t), font=font) <= max_w:
             cur = t
         else:
             if cur:
@@ -203,7 +619,7 @@ def render_title_png(text, path, font_path, size=54, max_w=W - 60):
     dr = ImageDraw.Draw(img)
     y = 10
     for ln in lines:
-        disp = get_display(arabic_reshaper.reshape(ln))
+        disp = display_text(ln)
         tw = dr.textlength(disp, font=font)
         # dark rounded backdrop behind each line for readability
         dr.rounded_rectangle([(W - tw) // 2 - 14, y - 4, (W + tw) // 2 + 14, y + size + 10],
@@ -229,7 +645,8 @@ def make_voice(text, path, voice="ar-SA-HamedNeural"):
         return False
 
 
-def story_audio_len(path):
+def probe_duration(path):
+    """Duration in seconds of an audio/video file via ffprobe; 0.0 on failure."""
     try:
         r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                             "-of", "csv=p=0", path], capture_output=True, text=True, timeout=30)
@@ -238,104 +655,409 @@ def story_audio_len(path):
         return 0.0
 
 
-def main():
-    with open(os.path.join(BASE, "feeds.json"), encoding="utf-8") as f:
-        feeds = json.load(f)
-    stories = fetch_stories(feeds)
-    if len(stories) < N_STORIES:
-        print(f"WARNING: only {len(stories)} stories found", file=sys.stderr)
-    if not stories:
-        print("ERROR: no stories fetched", file=sys.stderr)
-        sys.exit(1)
+def story_audio_len(path):
+    return probe_duration(path)
 
-    font = get_font()
-    print(f"Stories: {len(stories)}")
-    segments = []  # (image_paths, title_png, audio_path)
-    for i, st in enumerate(stories):
-        topic = topic_for(st["title"])
-        urls = openverse_images(topic)
+
+def silent_audio(path, seconds):
+    """Silent mp3 of `seconds` (fallback when edge-tts is unreachable, e.g.
+    on this VM behind the egress proxy; the real TTS works on GitHub
+    runners). Returns True if a valid file was written."""
+    try:
+        r = subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
+                            "anullsrc=r=44100:cl=stereo", "-t", str(seconds),
+                            "-c:a", "libmp3lame", "-b:a", "96k", path],
+                           capture_output=True, text=True, timeout=120)
+        return (r.returncode == 0 and os.path.exists(path)
+                and os.path.getsize(path) > 1000)
+    except Exception as ex:
+        print(f"silent audio failed: {ex}", file=sys.stderr)
+        return False
+
+
+def get_music():
+    """Path to the background-music track, or None. Committed file first;
+    otherwise one download attempt from the stable Mixkit URL; if that
+    also fails, the build proceeds with voice only (never crashes)."""
+    if os.path.exists(MUSIC_PATH) and os.path.getsize(MUSIC_PATH) > 10000:
+        return MUSIC_PATH
+    try:
+        if download(MUSIC_URL, MUSIC_PATH, min_bytes=10000):
+            return MUSIC_PATH
+    except Exception as ex:
+        print(f"music download failed: {ex}", file=sys.stderr)
+    return None
+
+
+def music_mix_filters(music_idx, total_dur):
+    """Filter lines mixing the looped music track UNDER the voice concat
+    [aout] at MUSIC_VOL. aformat normalizes both legs to 44.1k stereo so
+    amix always gets matching formats; normalize=0 keeps the voice at full
+    volume (amix would otherwise halve it). Output label: [aout2]."""
+    return [f"[{music_idx}:a]atrim=0:{total_dur},volume={MUSIC_VOL},"
+            "aformat=sample_rates=44100:channel_layouts=stereo[mus]",
+            "[aout]aformat=sample_rates=44100:channel_layouts=stereo[av]",
+            "[av][mus]amix=inputs=2:duration=first:normalize=0[aout2]"]
+
+
+def template_narration(st, max_chars):
+    """Narration text for a built-in template topic: title + script,
+    truncated at a word boundary. The SAME function is used by the builders
+    and by scripts/prefetch_media.py, so a pooled audio file always matches
+    the text the builder would speak."""
+    return st["title"] + ". " + fit_text(st["desc"], max_chars)
+
+
+def narration_hash(text, voice):
+    """Pool key for pre-rendered audio: hash of (voice + narration text).
+    If the script changes by one word, the hash changes and the pooled audio
+    is NOT reused — it is re-generated."""
+    return hashlib.md5(f"{voice}\n{text}".encode("utf-8")).hexdigest()[:16]
+
+
+def load_pool():
+    """Read pool.json; return only entries whose local file exists and is
+    non-empty, each with a 'local' absolute path. Missing/empty pool => []."""
+    try:
+        with open(POOL_INDEX, encoding="utf-8") as f:
+            entries = json.load(f)
+    except Exception:
+        return []
+    out = []
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        p = os.path.join(BASE, e.get("path", ""))
+        if os.path.exists(p) and os.path.getsize(p) > 0:
+            out.append({**e, "local": p})
+    return out
+
+
+def _orient_rank(entry_orientation, want):
+    """0 = exact orientation match, 1 = square/any, 2 = opposite (ffmpeg
+    crops it anyway, so it is still usable as a last resort)."""
+    o = (entry_orientation or "any").lower()
+    if o == want:
+        return 0
+    if o in ("square", "any"):
+        return 1
+    return 2
+
+
+def pool_pick(pool, topic, kind, orientation, n, used):
+    """Up to n pool entries for (topic, kind), best orientation first,
+    preferring files not yet used in this run (reuse only when exhausted)."""
+    cands = [e for e in pool
+             if e.get("topic") == topic and e.get("kind") == kind]
+    rank = lambda e: _orient_rank(e.get("orientation"), orientation)
+    fresh = sorted([e for e in cands if e["local"] not in used], key=rank)
+    stale = sorted([e for e in cands if e["local"] in used], key=rank)
+    return (fresh + stale)[:n]
+
+
+def pool_audio(narr, voice):
+    """Pooled narration audio whose script_hash matches (voice + narr), or
+    None. Only for fixed texts (smart-glasses template scripts, end CTA) —
+    news narration is fresh every run and is never pooled."""
+    want = narration_hash(narr, voice)
+    for e in load_pool():
+        if e.get("kind") != "audio" or e.get("script_hash") != want:
+            continue
+        p = e["local"]
+        if os.path.getsize(p) > 1000 and probe_duration(p) > 0:
+            return p
+    return None
+
+
+def gather_visuals(pool, topic, prefix, n, orientation, used, font, story_title):
+    """Visuals for one story, pool FIRST:
+    pooled video clips -> live Pixabay videos -> live Pexels videos
+    (dormant while Pexels pauses new keys) -> pooled photos -> live photos
+    (Pexels -> Unsplash -> Openverse) -> reuse -> title card.
+    orientation: "portrait" (vertical Reels) or "landscape" (long video).
+    Returns [(path, "video"|"image")], never empty."""
+    visuals = []
+    # 0. Pooled video clips (pre-fetched, already validated).
+    for e in pool_pick(pool, topic, "video", orientation, n, used):
+        visuals.append((e["local"], "video"))
+        used.add(e["local"])
+        print(f"  pool video: {os.path.basename(e['local'])}")
+    # 1. Live Pixabay video clips (first live video source — Pexels new
+    # keys are paused, so Pixabay carries the video slots for now).
+    if len(visuals) < n:
+        for j, u in enumerate(pixabay_videos(topic, n=6, orientation=orientation)):
+            p = os.path.join(ASSETS, f"{prefix}_pbvid{j}.mp4")
+            if download(u, p, min_bytes=100_000) and probe_duration(p) > 0:
+                visuals.append((p, "video"))
+            if len(visuals) >= n:
+                break
+    # 2. Live Pexels video clips (dormant without a key; works again if
+    # Pexels resumes issuing keys).
+    if len(visuals) < n:
+        for j, u in enumerate(pexels_videos(topic, n=6, orientation=orientation)):
+            p = os.path.join(ASSETS, f"{prefix}_vid{j}.mp4")
+            if download(u, p, min_bytes=100_000) and probe_duration(p) > 0:
+                visuals.append((p, "video"))
+            if len(visuals) >= n:
+                break
+    # 3. Pooled photos.
+    if len(visuals) < n:
+        for e in pool_pick(pool, topic, "photo", orientation,
+                           n - len(visuals), used):
+            visuals.append((e["local"], "image"))
+            used.add(e["local"])
+            print(f"  pool photo: {os.path.basename(e['local'])}")
+    # 4. Live photos: Pexels (direct API) -> Unsplash (direct API) ->
+    # Openverse (keyless) -> title card. No RSS/agency visuals.
+    if len(visuals) < n:
+        urls = pexels_images(
+            topic, orientation=("landscape" if orientation == "landscape" else None))
+        if len(urls) < 6:
+            urls += unsplash_images(topic)
+        if len(urls) < 6:
+            urls += openverse_images(topic)
         if len(urls) < 6:
             urls += openverse_images("news")
-        imgs = []
         for j, u in enumerate(urls[:6]):
-            p = os.path.join(ASSETS, f"s{i}_img{j}.jpg")
+            p = os.path.join(ASSETS, f"{prefix}_img{j}.jpg")
             if download(u, p):
-                imgs.append(p)
-            if len(imgs) >= N_IMG:
+                visuals.append((p, "image"))
+            if len(visuals) >= n:
                 break
-        # fallback: reuse any image we already have
-        while len(imgs) < N_IMG and imgs:
-            imgs.append(imgs[0])
-        if not imgs:
-            # last resort: generated title card, so the story is never skipped
-            card = os.path.join(ASSETS, f"s{i}_card.jpg")
-            make_card_image(st["title"], card, font)
-            imgs = [card, card, card]
-            print(f"story {i}: no stock photos, using title card", file=sys.stderr)
+    # fallback: reuse any visual we already have
+    while len(visuals) < n and visuals:
+        visuals.append(visuals[0])
+    if not visuals:
+        # last resort: generated title card, so the story is never skipped
+        card = os.path.join(ASSETS, f"{prefix}_card.jpg")
+        make_card_image(story_title, card, font)
+        visuals = [(card, "image")] * n
+        print(f"story {prefix}: no stock visuals, using title card",
+              file=sys.stderr)
+    return visuals
+
+
+def main():
+    # The channel is fully English now: English titles, English voice
+    # (en-US-AriaNeural), English on-screen text and CTA in both modes.
+    # Smart-glasses mode (env SMART_GLASSES_ONLY=1): real smart-glasses
+    # news stories first, then built-in template topics (rotating) fill the
+    # remaining slots — the mode never depends on the feeds, so zero news
+    # stories still yields a complete Reel. NEWS mode: real articles only.
+    smart_only = os.environ.get("SMART_GLASSES_ONLY", "").strip() == "1"
+    topic_mode = "smart-glasses" if smart_only else "news"
+    voice = EN_VOICE
+    with open(os.path.join(BASE, "feeds.json"), encoding="utf-8") as f:
+        feeds = json.load(f)
+    if smart_only:
+        try:
+            pool = fetch_stories(feeds, limit=60)
+        except Exception as ex:
+            print(f"feed fetch failed ({ex}) — building from templates only",
+                  file=sys.stderr)
+            pool = []
+        real = [s for s in pool if is_smart_glasses(s)][:N_STORIES]
+        need = N_STORIES - len(real)
+        templates = ([template_story(t) for t in pick_smart_topics(need)]
+                     if need > 0 else [])
+        stories = real + templates
+        print(f"Smart-glasses mode: {len(real)} real story(ies) + "
+              f"{len(templates)} template topic(s)")
+    else:
+        stories = fetch_stories(feeds)
+        if len(stories) < N_STORIES:
+            print(f"WARNING: only {len(stories)} stories found", file=sys.stderr)
+        if not stories:
+            print("ERROR: no stories fetched", file=sys.stderr)
+            sys.exit(1)
+    for s in stories:
+        s["topic"] = topic_mode
+
+    font = get_font()
+    pool = load_pool()
+    used = set()  # pool files already used in this run (avoid repeats)
+    print(f"Media pool: {len(pool)} file(s)")
+    print(f"Stories: {len(stories)}")
+    segments = []  # dicts (see make_segment)
+    for i, st in enumerate(stories):
+        # Smart-glasses mode always uses smart-glasses visuals; news mode
+        # maps the title to its topic (English keywords).
+        topic = ("smart glasses augmented reality" if smart_only
+                 else topic_for(st["title"]))
+        visuals = gather_visuals(pool, topic, f"s{i}", N_IMG, "portrait",
+                                 used, font, st["title"])
         title_png = os.path.join(ASSETS, f"s{i}_title.png")
         render_title_png(st["title"], title_png, font)
-        # narration: title + short summary (fits ~12s)
-        narr = st["title"] + ". " + st["desc"][:220]
-        audio = os.path.join(ASSETS, f"s{i}.mp3")
-        ok = make_voice(narr, audio)
-        if not ok:
-            audio = None
-        print(f"story {i}: {st['title'][:60]} | imgs={len(imgs)} | audio={'ok' if audio else 'NO'}")
-        segments.append((imgs, title_png, audio))
+        # narration: title + short summary (fits ~12s). Template topics use
+        # their script, truncated at a word boundary. Template narration is
+        # a fixed text, so the pool may already hold its audio (keyed by
+        # script hash); news narration is fresh every run and is always
+        # generated here.
+        audio_src = "gen"
+        if st.get("template"):
+            narr = template_narration(st, 220)
+            pooled = pool_audio(narr, voice)
+            audio = os.path.join(ASSETS, f"s{i}.mp3")
+            if pooled:
+                audio, audio_src = pooled, "pool"
+            elif not make_voice(narr, audio, voice=voice):
+                audio = None
+        else:
+            narr = st["title"] + ". " + st["desc"][:220]
+            audio = os.path.join(ASSETS, f"s{i}.mp3")
+            if not make_voice(narr, audio, voice=voice):
+                audio = None
+        n_vid = sum(1 for _, k in visuals if k == "video")
+        print(f"story {i}: {st['title'][:60]} | visuals={len(visuals)} "
+              f"(video={n_vid}) | audio={audio_src if audio else 'NO'}")
+        # Presenter interstitial BEFORE this story (except the first one):
+        # a brief slice of the presenter clip, visual only — this story's
+        # narration starts over it, so the story segment below skips those
+        # seconds (a_start=PRESENTER_SEC). If the presenter clip is
+        # unavailable, no interstitial and no skip.
+        story_skip = 0.0
+        if i > 0:
+            inter = presenter_segment(i - 1, "s", W, H, audio)
+            if inter is not None:
+                segments.append(inter)
+                story_skip = PRESENTER_SEC if audio else 0.0
+        segments.append(make_segment(visuals, title_png, audio, STORY_SEC,
+                                      a_start=story_skip))
+
+    # End CTA (his order: every Reel ends with a site-visit call, voice +
+    # on-screen). Reuses the exact segment machinery above, so it adds one
+    # 15s segment (~125s Reel total). English channel: English CTA + the
+    # English site on the card.
+    cta_card = os.path.join(ASSETS, "cta_card.jpg")
+    make_card_image("breaking-news-en.vercel.app", cta_card, font)
+    cta_title = os.path.join(ASSETS, "cta_title.png")
+    render_title_png("For more news, visit our website", cta_title, font)
+    cta_audio = os.path.join(ASSETS, "cta.mp3")
+    pooled_cta = pool_audio(CTA_NARR, voice)
+    if pooled_cta:
+        cta_audio = pooled_cta
+        print("CTA audio: pool")
+    elif not make_voice(CTA_NARR, cta_audio, voice=voice):
+        cta_audio = None
+    segments.append(make_segment([(cta_card, "image")] * N_IMG, cta_title,
+                                 cta_audio, STORY_SEC))
 
     if not segments:
         print("ERROR: no story segments to render", file=sys.stderr)
         sys.exit(1)
 
-    # Build one ffmpeg command: each story = 3 images (5s each) + title overlay + voice
+    out_mp4 = os.path.join(OUT, "reel.mp4")
+    assemble_reel(segments, out_mp4)
+    size = os.path.getsize(out_mp4)
+    print(f"DONE: {out_mp4} ({size/1e6:.1f} MB)")
+    with open(os.path.join(OUT, "stories.json"), "w", encoding="utf-8") as f:
+        json.dump([{"title": s["title"], "link": s["link"],
+                    "topic": s.get("topic", "news"),
+                    "template": bool(s.get("template"))} for s in stories],
+                  f, ensure_ascii=False, indent=2)
+
+
+def assemble_reel(segments, out_mp4):
+    """Build one mp4 from segments (dicts — see make_segment).
+    Each story = 3 visuals (5s each; video clips play, photos loop) + title
+    overlay + voice; presenter interstitials = 1 visual (4s, no title) with
+    the next story's narration starting over it. All visuals are normalized
+    to 720x1280 @ 30fps so the concat works with mixed video/photo inputs.
+    Segment durations vary (15s stories, 4s interstitials, 15s CTA); each
+    visual fills dur/len(visuals); each audio leg is padded to its segment
+    length, so the video/audio concats always line up."""
     inputs, filters = [], []
     audio_labels = []
     idx = 0
-    for si, (imgs, title_png, audio) in enumerate(segments):
-        img_indices = []
-        for p in imgs:
-            inputs += ["-loop", "1", "-t", str(IMG_SEC), "-i", p]
-            img_indices.append(idx)
+    for si, seg in enumerate(segments):
+        visuals = seg["visuals"]
+        title_png = seg.get("title")
+        audio = seg.get("audio")
+        dur = seg["dur"]
+        a_start = seg.get("a_start", 0.0)
+        a_end = seg.get("a_end")
+        vis_dur = dur / len(visuals)
+        vis_indices = []
+        for p, kind in visuals:
+            if kind == "video":
+                # real clip: trim to vis_dur, drop its own audio (voiceover covers it)
+                inputs += ["-t", str(vis_dur), "-an", "-i", p]
+            else:
+                inputs += ["-loop", "1", "-t", str(vis_dur), "-i", p]
+            vis_indices.append(idx)
             idx += 1
-        inputs += ["-loop", "1", "-t", str(STORY_SEC), "-i", title_png]
-        title_idx = idx
-        idx += 1
+        # normalize every visual to 720x1280 @ 30fps (use the REAL input
+        # indices: title and audio inputs sit between stories, so visuals
+        # are NOT contiguous). fps=30 normalizes mixed video/photo rates.
+        for v in vis_indices:
+            filters.append(
+                f"[{v}:v]scale={W}:{H}:force_original_aspect_ratio=increase,"
+                f"crop={W}:{H},setsar=1,fps=30[v{v}]")
+        if len(vis_indices) == 1:
+            seg_label = f"v{vis_indices[0]}"
+        else:
+            # concat the visuals into one segment of length dur
+            filters.append(
+                "".join(f"[v{v}]" for v in vis_indices) +
+                f"concat=n={len(vis_indices)}:v=1:a=0[seg{si}]")
+            seg_label = f"seg{si}"
+        if title_png:
+            inputs += ["-loop", "1", "-t", str(dur), "-i", title_png]
+            title_idx = idx
+            idx += 1
+            filters.append(
+                f"[{seg_label}][{title_idx}:v]overlay=(W-w)/2:H-h-90[sv{si}]")
+        else:
+            # no title overlay (presenter interstitial): pass through
+            filters.append(f"[{seg_label}]null[sv{si}]")
         if audio:
             inputs += ["-i", audio]
             audio_idx = idx
             idx += 1
-        else:
-            audio_idx = None
-        # scale each image to 720x1280 (use the REAL input indices: title and
-        # audio inputs sit between stories, so images are NOT contiguous)
-        for v in img_indices:
-            filters.append(
-                f"[{v}:v]scale={W}:{H}:force_original_aspect_ratio=increase,"
-                f"crop={W}:{H},setsar=1[v{v}]")
-        # concat the 3 scaled images into one 15s segment
-        filters.append(
-            f"[v{img_indices[0]}][v{img_indices[1]}][v{img_indices[2]}]"
-            f"concat=n=3:v=1:a=0[seg{si}]")
-        filters.append(
-            f"[seg{si}][{title_idx}:v]overlay=(W-w)/2:H-h-90[sv{si}]")
-        if audio_idx is not None:
-            # apad must live in `filters` itself, or [a{si}] never exists
-            filters.append(f"[{audio_idx}:a]apad=whole_dur={STORY_SEC}[a{si}]")
+            # narration window [a_start, a_end): an interstitial plays the
+            # first seconds of the next story's narration; the story itself
+            # skips those seconds. apad pads the leg to the segment length.
+            # asetpts is REQUIRED after atrim: atrim keeps the input
+            # timestamps, so without the reset the leg starts late in the
+            # concat (a 4s hole in the audio timeline per skipped story).
+            if a_end is not None:
+                af = (f"[{audio_idx}:a]atrim={a_start}:{a_end},"
+                      f"asetpts=PTS-STARTPTS,apad=whole_dur={dur}[a{si}]")
+            elif a_start > 0:
+                af = (f"[{audio_idx}:a]atrim={a_start},"
+                      f"asetpts=PTS-STARTPTS,apad=whole_dur={dur}[a{si}]")
+            else:
+                af = f"[{audio_idx}:a]apad=whole_dur={dur}[a{si}]"
+            filters.append(af)
             audio_labels.append(f"[a{si}]")
         else:
             # silent audio so the final audio concat always has nseg streams
-            filters.append(f"anullsrc=r=44100:cl=stereo,atrim=0:{STORY_SEC}[a{si}]")
+            filters.append(f"anullsrc=r=44100:cl=stereo,atrim=0:{dur}[a{si}]")
             audio_labels.append(f"[a{si}]")
     nseg = len(segments)
+    total_dur = sum(s["dur"] for s in segments)
     vcat = "".join(f"[sv{i}]" for i in range(nseg))
     filters.append(f"{vcat}concat=n={nseg}:v=1:a=0[vout]")
     if audio_labels:
         acat = "".join(audio_labels)
         filters.append(f"{acat}concat=n={nseg}:v=0:a=1[aout]")
-        amap = ["-map", "[aout]"]
+        # Background music under the voice (looped, low volume). If no
+        # music file is available the build still succeeds, voice only.
+        music = get_music()
+        if music:
+            inputs += ["-stream_loop", "-1", "-i", music]
+            music_idx = idx
+            idx += 1
+            filters += music_mix_filters(music_idx, total_dur)
+            amap = ["-map", "[aout2]"]
+            print(f"Background music: {os.path.basename(music)} "
+                  f"at volume {MUSIC_VOL}")
+        else:
+            amap = ["-map", "[aout]"]
+            print("Background music: none available, voice only",
+                  file=sys.stderr)
     else:
         amap = []
-    out_mp4 = os.path.join(OUT, "reel.mp4")
     cmd = (["ffmpeg", "-y"] + inputs +
            ["-filter_complex", ";".join(filters),
             "-map", "[vout]"] + amap +
@@ -348,11 +1070,6 @@ def main():
     if r.returncode != 0:
         print(r.stderr[-3000:], file=sys.stderr)
         sys.exit(1)
-    size = os.path.getsize(out_mp4)
-    print(f"DONE: {out_mp4} ({size/1e6:.1f} MB)")
-    with open(os.path.join(OUT, "stories.json"), "w", encoding="utf-8") as f:
-        json.dump([{"title": s["title"], "link": s["link"]} for s in stories[:nseg]],
-                  f, ensure_ascii=False, indent=2)
 
 
 if __name__ == "__main__":

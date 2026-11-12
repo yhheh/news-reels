@@ -5,8 +5,8 @@ Runs at the start of a workflow run (before the builders) and prepares the
 pool in data/media_pool/ + data/media_pool/pool.json, so the builders pick
 ready visuals/audio instead of calling the live APIs for every story:
 
-VISUALS (per stock topic in build_reel.TOPICS — news topics + "smart
-glasses augmented reality"):
+VISUALS (per stock topic in build_reel.TOPICS — news topics + "islam
+mosque"):
   Pexels photos (3/topic) + Unsplash photos (2/topic) + Pixabay video
   clips (2 portrait + 2 landscape per topic) + Pexels video clips
   (2 portrait + 2 landscape per topic, dormant while Pexels pauses new
@@ -15,7 +15,7 @@ glasses augmented reality"):
   6 videos per topic.
 
 AUDIO (only fixed texts can be pre-rendered):
-  For every built-in smart-glasses topic (build_reel.SMART_TOPICS) the
+  For every built-in Islamic topic (build_reel.ISLAM_TOPICS) the
   narration is rendered once per format — Reel (220 chars) and long video
   (400 chars) — with the English voice en-US-AriaNeural, plus the fixed end
   CTA. Each entry is keyed by script_hash = md5(voice + narration text):
@@ -266,10 +266,10 @@ def render_audio(entries, topic_title, narr, voice, fmt, seconds):
 
 
 def prefetch_audio(entries):
-    """Pre-render narration for every built-in smart-glasses topic (both
+    """Pre-render narration for every built-in Islamic topic (both
     formats) + the fixed end CTA. Returns (rendered, skipped-already)."""
     rendered = skipped = 0
-    for t in br.SMART_TOPICS:
+    for t in br.ISLAM_TOPICS:
         st = br.template_story(t)
         for fmt, max_chars, seconds in AUDIO_FORMATS:
             narr = br.template_narration(st, max_chars)
@@ -294,7 +294,7 @@ def prune(entries):
     """Drop stale audio (hash no longer matches any current script) and
     excess visuals (keep the newest per topic); delete their files."""
     current_hashes = {br.narration_hash(br.template_narration(br.template_story(t), mc), VOICE)
-                      for t in br.SMART_TOPICS for _, mc, _ in AUDIO_FORMATS}
+                      for t in br.ISLAM_TOPICS for _, mc, _ in AUDIO_FORMATS}
     current_hashes.add(br.narration_hash(br.CTA_NARR, VOICE))
     keep, dropped = [], 0
     for e in entries:

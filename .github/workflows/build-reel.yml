@@ -64,7 +64,8 @@ jobs:
             echo "long_topic=news" >> "$GITHUB_OUTPUT"
           fi
       - name: Show modes
-        run: echo "Run #${{ github.run_number }}: Reel smart-glasses=${{ steps.modes.outputs.reel_smart }}, long video topic=${{ steps.modes.outputs.long_topic }}"
+        run: |
+          echo "Run #${{ github.run_number }}: Reel smart-glasses=${{ steps.modes.outputs.reel_smart }}, long video topic=${{ steps.modes.outputs.long_topic }}"
       - name: Build the Reel
         env:
           PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}

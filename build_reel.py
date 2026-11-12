@@ -14,7 +14,7 @@ Pixabay Videos API (PIXABAY_API_KEY) -> Pexels Videos API
 card. Video clips are real moving footage; photos fill in when fewer
 than 3 usable clips are found for a story.
 Modes: default = general news (real English articles only).
-SMART_GLASSES_ONLY=1 => smart-glasses Reel: real smart-glasses news first,
+ISLAMIC_ONLY=1 => Islamic Reel: real Islamic news first,
 then built-in English template topics (rotating, generic/educational only)
 fill the remaining slots — the mode never depends on the feeds.
 Output: out/reel.mp4
@@ -25,7 +25,7 @@ at volume 0.15; if the file is missing the build still succeeds, voice only.
 MEDIA POOL (data/media_pool/ + pool.json, filled by scripts/prefetch_media.py):
 visuals AND narration audio are picked from the pool FIRST, then the live
 APIs. Visuals: pooled clips/photos for the story's topic. Audio: only the
-fixed smart-glasses template scripts (and the fixed end CTA) can be pooled —
+fixed Islamic template scripts (and the fixed end CTA) can be pooled —
 their narration text is known in advance, so it is keyed by a hash of
 (voice + narration text); a changed script changes the hash and the audio
 is re-generated, never reused stale. NEWS narration is fresh every run
@@ -168,12 +168,12 @@ def presenter_segment(k, prefix, target_w, target_h, audio):
     return make_segment([(path, "video")], None, audio, PRESENTER_SEC,
                         a_start=0.0, a_end=PRESENTER_SEC)
 
-# Smart-glasses filter (shared by the Reels smart-glasses mode and the
+# Islamic filter (shared by the Reels Islamic mode and the
 # long-video builder): a story counts if its title+description contains
 # any of these words (matched on word boundaries, case-insensitive).
-SMART_GLASSES_WORDS = ["smart glasses", "smart glass", "augmented reality",
-                        "ar glasses", "vision pro", "ray-ban", "xreal", "meta",
-                        "mixed reality", "wearable", "wearables"]
+ISLAM_WORDS = ["islam", "islamic", "muslim", "quran", "koran",
+               "mosque", "ramadan", "eid", "prophet muhammad",
+               "mecca", "hajj", "allah", "imam"]
 
 
 def _contains_any(text, words):
@@ -183,10 +183,10 @@ def _contains_any(text, words):
                for w in words)
 
 
-def is_smart_glasses(story):
-    """True if the story is about smart glasses / AR glasses."""
+def is_islamic(story):
+    """True if the story is about Islam / Muslims."""
     hay = (story.get("title", "") + " " + story.get("desc", ""))
-    return _contains_any(hay, SMART_GLASSES_WORDS)
+    return _contains_any(hay, ISLAM_WORDS)
 
 
 def _has_arabic(s):
@@ -213,41 +213,47 @@ def fit_text(text, max_chars):
     return text[:max_chars].rsplit(" ", 1)[0]
 
 
-# Built-in smart-glasses topics (ENGLISH). The smart-glasses mode does NOT
-# depend on news feeds: each run picks topics from this list (rotating) and
-# builds segments from them; real smart-glasses news stories, when found,
-# are mixed in as extra segments. STRICT RULE: generic and educational only
-# — never invent news events, prices, release dates, or quotes. Every
-# sentence below is true in general terms.
-SMART_TOPICS = [
-    {"title": "What Are Smart Glasses?",
-     "script": "Smart glasses are wearable devices that look like ordinary glasses, but they contain tiny displays, cameras, microphones and speakers. They can show notifications, directions and translations in your field of view, take photos and videos without using your hands, and play audio without headphones. Unlike large virtual reality headsets, smart glasses are made to be worn all day. They keep you connected to digital information while you can still see the real world around you, which makes them useful for work, travel and everyday life."},
-    {"title": "How Augmented Reality Works",
-     "script": "Augmented reality, or AR, adds digital information to the real world. Smart glasses use cameras and sensors to understand the room or street around you, and a small display projects images, text or directions onto the lens. The glasses track how your head moves, so the digital content stays fixed in place as you look around. This lets you see a translation above a street sign, a recipe beside your cooking, or step-by-step directions floating on the road ahead, all without holding a phone."},
-    {"title": "Ray-Ban Meta Glasses",
-     "script": "Ray-Ban Meta glasses are camera glasses made by Meta together with Ray-Ban. They look like normal sunglasses, but they have a built-in camera, microphones and speakers. You can take photos and videos hands-free, listen to music and calls, and ask the built-in assistant questions using your voice. They connect to your phone, so photos and videos can be shared from the glasses. They are one of the best-known examples of smart glasses that people wear as everyday eyewear."},
-    {"title": "Apple Vision Pro",
-     "script": "Apple Vision Pro is Apple's mixed reality headset. It blends digital content with the real world using high-resolution displays, cameras and sensors. You can control it with your eyes, hands and voice, open apps in the space around you, watch films on a large virtual screen, or join video calls with a digital version of yourself. It is bigger and heavier than smart glasses, and it is designed for immersive experiences at home or at work rather than all-day wear outdoors."},
-    {"title": "Smart Glasses at Work",
-     "script": "In many jobs, smart glasses let workers keep both hands free. A technician can see repair instructions in front of their eyes, a warehouse worker can follow picking directions without holding a scanner, and a doctor can view patient information while examining someone. An expert far away can see what the worker sees through the glasses camera and guide them by voice. This saves time, reduces mistakes and helps train new workers faster, which is why factories, hospitals and field services are testing them."},
-    {"title": "Smart Glasses and Privacy",
-     "script": "Smart glasses have cameras and microphones, so privacy is one of the biggest questions around them. People nearby may not know when they are being recorded, which is why many glasses have a small light that turns on while recording. Rules about filming in public places are different in each country, and workplaces and schools often have their own policies. Designers are working on clearer signals, on-device processing and easy ways to switch the camera off, but the debate about privacy and smart glasses is far from over."},
-    {"title": "Smart Glasses for Sports and Travel",
-     "script": "For sport and travel, smart glasses can be surprisingly useful. A cyclist can see speed and directions without looking down at a phone, a runner can hear pace updates through built-in speakers, and a traveller can read translations of street signs in real time. They can also take photos and videos from your point of view while your hands stay free. Because they are light and look like normal glasses, they are easier to wear on a trip or a workout than carrying a phone or a camera."},
-    {"title": "The Future of Augmented Reality",
-     "script": "The future of augmented reality points towards glasses that are lighter, with longer battery life and a wider field of view. Companies are working on displays that look more natural, batteries that last a full day, and assistants that understand what you are looking at and help without being asked. One day, glasses could replace the phone screen for many tasks, from messages and maps to live translation. There is still a long way to go, but each new generation brings the technology closer to everyday use."},
-    {"title": "Smart Glasses vs VR Headsets",
-     "script": "Smart glasses and virtual reality headsets are often confused, but they do different things. Smart glasses add digital information to the real world, so you still see the street, your desk or the people around you. Virtual reality headsets block out the real world completely and replace it with a digital one, which is better for games and immersive films. Glasses are light and made for daily life, while headsets are heavier and made for focused sessions at home."},
-    {"title": "How to Choose Smart Glasses",
-     "script": "If you are thinking about smart glasses, a few things matter most. Comfort comes first, because you will wear them for hours, so weight and fit are important. Battery life decides how long you can use them without charging. Display quality affects how clearly you can read text, and the camera decides how good your photos and videos look. Check that they work with your phone, and look for clear privacy controls, like a recording light and a simple way to turn the camera off."},
+# Built-in Islamic topics (ENGLISH). The Islamic mode does NOT depend on
+# news feeds: each run picks topics from this list (rotating) and builds
+# segments from them; real Islamic news stories, when found, are mixed in
+# as extra segments. STRICT RULE: generic and educational only — never
+# invent news events, prices, release dates, or quotes. Every sentence
+# below is true in general terms. The topics introduce Islam — its history,
+# its characteristics, and its role in society — to a general audience,
+# one introductory topic per Islamic batch (rotating).
+ISLAM_TOPICS = [
+    {"title": "What Is Islam?",
+     "script": "Islam is a monotheistic faith followed by nearly two billion people around the world. Muslims believe in one God, called Allah in Arabic, and that the Prophet Muhammad is the final messenger. The word Islam means submission to God, and the faith teaches peace, compassion, justice and care for others. Its holy book is the Quran, believed by Muslims to be the word of God revealed to the Prophet Muhammad."},
+    {"title": "The History of Islam",
+     "script": "Islam began in the seventh century, when the Prophet Muhammad received the revelation of the Quran in Mecca. From the Arabian Peninsula the faith spread across the Middle East, North Africa and Asia, carried by trade, scholarship and the example of Muslim communities. Islamic civilisation produced great advances in science, medicine, mathematics and art, and its scholars preserved and extended the knowledge of earlier civilisations. Today Islam is one of the world's largest religions, with followers in every country."},
+    {"title": "The Five Pillars of Islam",
+     "script": "The Five Pillars are the foundation of Muslim life. They are the declaration of faith, prayer five times a day, giving charity, fasting during the month of Ramadan, and the pilgrimage to Mecca for those who are able. These five practices shape how Muslims worship, give and live every day, and they are shared by Muslims in every country and culture."},
+    {"title": "The Quran",
+     "script": "The Quran is the holy book of Islam. Muslims believe it is the word of God, revealed to the Prophet Muhammad over twenty three years. It is written in Arabic and gives guidance on faith, prayer, family, charity and justice. Millions of Muslims memorise the whole book, and it is recited in prayer and read in homes and mosques around the world every day."},
+    {"title": "Prophet Muhammad",
+     "script": "The Prophet Muhammad is the final messenger in Islam. Muslims believe he received the revelation of the Quran and taught by example: honesty, kindness, patience and care for the poor. He was born in Mecca more than fourteen centuries ago, and his life is studied by Muslims as a model of character. Muslims mention him with respect and blessings whenever his name is said."},
+    {"title": "Prayer in Islam",
+     "script": "Prayer, called Salah, is one of the Five Pillars of Islam. Muslims pray five times a day: at dawn, midday, afternoon, sunset and night. The prayer includes standing, bowing and prostration, with recitation from the Quran. It is a direct connection with God, a pause from daily life, and a reminder of faith, humility and gratitude."},
+    {"title": "Ramadan and Fasting",
+     "script": "Ramadan is the holy month in which Muslims fast from dawn to sunset. Fasting means no food or drink during the day, and it teaches patience, self-control and empathy for people who are hungry. At sunset families gather to break the fast together. The month ends with the festival of Eid al-Fitr, a celebration of community, charity and gratitude."},
+    {"title": "Charity in Islam",
+     "script": "Giving to others is a central duty in Islam. Zakat is an annual giving of a small part of one's wealth to help the poor, and Sadaqah is voluntary charity given at any time. Muslims believe that wealth is a trust from God and that sharing it purifies the heart. Charity is not only money: a kind word, a helping hand and a smile are also described as charity."},
+    {"title": "Islamic Values and Character",
+     "script": "Islamic values guide how Muslims treat others. Honesty, kindness, patience, respect for parents and elders, care for neighbours and justice are taught in the Quran and in the example of the Prophet. Muslims are encouraged to speak truthfully, to keep promises, to forgive, and to help those in need, whatever their background. These values are shared by Muslims in every culture."},
+    {"title": "Islam and Society",
+     "script": "Islam gives guidance for life in society, not only for worship. It teaches justice, honesty in trade, care for neighbours, respect for parents and elders, and responsibility towards the poor and the weak. Muslims are encouraged to build strong families and communities, to resolve disputes fairly, and to contribute to the common good. The mosque is at the centre of this life, a place of prayer, learning and mutual support for the whole neighbourhood."},
+    {"title": "Family in Islam",
+     "script": "Family is at the heart of Islamic life. The Quran teaches kindness and respect towards parents, care for children, and responsibility within the family. Marriage is described as a source of love and tranquillity, and the rights of husbands, wives and children are set out clearly. Muslims are taught to keep family ties strong, to honour their elders, and to raise children with good character, faith and respect for others."},
+    {"title": "What Muslims Believe",
+     "script": "Muslims believe in one God, in angels, in the holy books, in the prophets, in the Day of Judgement and in divine decree. They believe Jesus is a respected prophet, and that the Prophet Muhammad is the final messenger. Faith in Islam is both belief and practice: prayer, charity, fasting and good character in daily life. Muslims see their faith as a complete way of life, guiding worship, family and society."},
 ]
 
 
-def smart_rotation_seed():
-    """Rotation offset for picking SMART_TOPICS: from env
-    SMART_ROTATION_SEED (the workflow passes github.run_number) so every
+def islam_rotation_seed():
+    """Rotation offset for picking ISLAM_TOPICS: from env
+    ISLAMIC_ROTATION_SEED (the workflow passes github.run_number) so every
     run covers different topics; falls back to the UTC day number."""
-    raw = os.environ.get("SMART_ROTATION_SEED", "").strip()
+    raw = os.environ.get("ISLAMIC_ROTATION_SEED", "").strip()
     if raw:
         try:
             return int(raw)
@@ -257,12 +263,18 @@ def smart_rotation_seed():
     return datetime.datetime.utcnow().toordinal()
 
 
-def pick_smart_topics(n, seed=None):
-    """Pick n topics from SMART_TOPICS, rotating by seed (wraps around)."""
+def pick_islam_topics(n, seed=None):
+    """Pick n topics from ISLAM_TOPICS, rotating by seed (wraps around)."""
     if seed is None:
-        seed = smart_rotation_seed()
-    start = seed % len(SMART_TOPICS)
-    return [SMART_TOPICS[(start + k) % len(SMART_TOPICS)] for k in range(n)]
+        seed = islam_rotation_seed()
+    start = seed % len(ISLAM_TOPICS)
+    return [ISLAM_TOPICS[(start + k) % len(ISLAM_TOPICS)] for k in range(n)]
+
+
+# Visual search topic for Islamic mode (stock photos/video clips of
+# mosques and prayer). The robot (scripts/prefetch_media.py) collects
+# visuals for this topic; the builders use it for Islamic segments.
+ISLAM_VISUAL_TOPIC = "islam mosque"
 
 
 def template_story(topic):
@@ -274,10 +286,10 @@ def template_story(topic):
 # English keyword -> English stock-photo/video topic (the channel is fully
 # English now: English feeds, English titles, English voice).
 TOPICS = [
-    # Smart glasses first: topic_for() returns the first match, and these
-    # stories must get smart-glasses visuals (dazzling photos/video clips),
-    # not generic tech ones. Used by the Reels and by the long smart-glasses video.
-    (["smart glasses", "smart glass", "augmented reality", "ar glasses", "vision pro", "ray-ban", "xreal", "mixed reality"], "smart glasses augmented reality"),
+    # Islam first: topic_for() returns the first match, and these stories
+    # must get Islamic visuals (mosque/prayer photos and video clips),
+    # not generic ones. Used by the Reels and by the long Islamic video.
+    (["islam", "muslim", "quran", "mosque", "ramadan", "eid", "prophet", "mecca", "hajj"], "islam mosque"),
     (["football", "soccer", "match", "league", "goal", "player", "championship", "cup", "tournament"], "football stadium"),
     (["economy", "dollar", "gold", "stock market", "shares", "oil", "inflation", "interest rate", "economy"], "economy money"),
     (["weather", "rain", "storm", "snow", "heatwave", "temperature", "flood"], "weather rain"),
@@ -757,7 +769,7 @@ def pool_pick(pool, topic, kind, orientation, n, used):
 
 def pool_audio(narr, voice):
     """Pooled narration audio whose script_hash matches (voice + narr), or
-    None. Only for fixed texts (smart-glasses template scripts, end CTA) —
+    None. Only for fixed texts (Islamic template scripts, end CTA) —
     news narration is fresh every run and is never pooled."""
     want = narration_hash(narr, voice)
     for e in load_pool():
@@ -840,28 +852,28 @@ def gather_visuals(pool, topic, prefix, n, orientation, used, font, story_title)
 def main():
     # The channel is fully English now: English titles, English voice
     # (en-US-AriaNeural), English on-screen text and CTA in both modes.
-    # Smart-glasses mode (env SMART_GLASSES_ONLY=1): real smart-glasses
-    # news stories first, then built-in template topics (rotating) fill the
-    # remaining slots — the mode never depends on the feeds, so zero news
-    # stories still yields a complete Reel. NEWS mode: real articles only.
-    smart_only = os.environ.get("SMART_GLASSES_ONLY", "").strip() == "1"
-    topic_mode = "smart-glasses" if smart_only else "news"
+    # Islamic mode (env ISLAMIC_ONLY=1): real Islamic news stories
+    # first, then built-in template topics (rotating) fill the remaining
+    # slots — the mode never depends on the feeds, so zero news stories
+    # still yields a complete Reel. NEWS mode: real articles only.
+    islam_only = os.environ.get("ISLAMIC_ONLY", "").strip() == "1"
+    topic_mode = "islamic" if islam_only else "news"
     voice = EN_VOICE
     with open(os.path.join(BASE, "feeds.json"), encoding="utf-8") as f:
         feeds = json.load(f)
-    if smart_only:
+    if islam_only:
         try:
             pool = fetch_stories(feeds, limit=60)
         except Exception as ex:
             print(f"feed fetch failed ({ex}) — building from templates only",
                   file=sys.stderr)
             pool = []
-        real = [s for s in pool if is_smart_glasses(s)][:N_STORIES]
+        real = [s for s in pool if is_islamic(s)][:N_STORIES]
         need = N_STORIES - len(real)
-        templates = ([template_story(t) for t in pick_smart_topics(need)]
+        templates = ([template_story(t) for t in pick_islam_topics(need)]
                      if need > 0 else [])
         stories = real + templates
-        print(f"Smart-glasses mode: {len(real)} real story(ies) + "
+        print(f"Islamic mode: {len(real)} real story(ies) + "
               f"{len(templates)} template topic(s)")
     else:
         stories = fetch_stories(feeds)
@@ -880,9 +892,9 @@ def main():
     print(f"Stories: {len(stories)}")
     segments = []  # dicts (see make_segment)
     for i, st in enumerate(stories):
-        # Smart-glasses mode always uses smart-glasses visuals; news mode
-        # maps the title to its topic (English keywords).
-        topic = ("smart glasses augmented reality" if smart_only
+        # Islamic mode always uses Islamic visuals; news mode maps the
+        # title to its topic (English keywords).
+        topic = (ISLAM_VISUAL_TOPIC if islam_only
                  else topic_for(st["title"]))
         visuals = gather_visuals(pool, topic, f"s{i}", N_IMG, "portrait",
                                  used, font, st["title"])

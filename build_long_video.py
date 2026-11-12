@@ -5,9 +5,9 @@ Horizontal 16:9, 1280x720, 30fps. Up to 6 stories, 30s each, with a brief
 video, assets/presenter.mp4 — the next story's narration starts over the
 presenter, then the story visuals roll) + a 30s end CTA. Total ≈230s.
 English titles, English voice (en-US-AriaNeural), English CTA.
-Modes (env LONG_TOPIC, default "smart-glasses"):
-  smart-glasses: real smart-glasses news first, then built-in English
-    template topics (rotating, generic/educational only) fill the remaining
+Modes (env LONG_TOPIC, default "islamic"):
+  islamic: real Islamic news first, then built-in English template
+    topics (rotating, generic/educational only) fill the remaining
     slots — the mode never depends on the feeds.
   news: the newest English news stories, real articles only.
 Background music: "Serene View" by Arulo (Mixkit, royalty-free — see
@@ -16,7 +16,7 @@ is missing the build still succeeds, voice only.
 Visuals per story (same fallback order as the Reels): pool clips/photos
 first (data/media_pool/, see build_reel.gather_visuals), then Pexels video
 clips (landscape) -> Pexels photos -> Unsplash -> Openverse -> title card.
-Audio: smart-glasses template narration is a fixed text, so the pool may
+Audio: Islamic template narration is a fixed text, so the pool may
 already hold it (keyed by script hash — see build_reel.pool_audio); news
 narration is fresh every run and is always generated at build time.
 Free stock only, no RSS/agency visuals.
@@ -41,11 +41,11 @@ L_VIS_SEC = 10              # seconds per visual (3 visuals x 10s = 30s)
 L_N_VIS = 3
 L_N_STORIES = 6
 EN_VOICE = "en-US-AriaNeural"
-SMART_TOPIC = "smart glasses augmented reality"
+ISLAM_TOPIC = br.ISLAM_VISUAL_TOPIC
 
 
 def fetch_long_stories(feeds, mode):
-    """Stories for the long video (smart-glasses mode only; news mode uses
+    """Stories for the long video (islamic mode only; news mode uses
     br.fetch_stories directly). Real stories first, templates fill the rest."""
     try:
         pool = br.fetch_stories(feeds, limit=60)
@@ -53,11 +53,11 @@ def fetch_long_stories(feeds, mode):
         print(f"feed fetch failed ({ex}) — building from templates only",
               file=sys.stderr)
         pool = []
-    real = [s for s in pool if br.is_smart_glasses(s)][:L_N_STORIES]
+    real = [s for s in pool if br.is_islamic(s)][:L_N_STORIES]
     need = L_N_STORIES - len(real)
-    templates = ([br.template_story(t) for t in br.pick_smart_topics(need)]
+    templates = ([br.template_story(t) for t in br.pick_islam_topics(need)]
                  if need > 0 else [])
-    print(f"Smart-glasses mode: {len(real)} real story(ies) + "
+    print(f"Islamic mode: {len(real)} real story(ies) + "
           f"{len(templates)} template topic(s)")
     return real + templates
 
@@ -190,11 +190,11 @@ def assemble_long(segments, out_mp4):
 
 
 def main():
-    mode = os.environ.get("LONG_TOPIC", "smart-glasses").strip().lower()
-    if mode not in ("smart-glasses", "news"):
-        print(f"WARNING: unknown LONG_TOPIC {mode!r}, using smart-glasses",
+    mode = os.environ.get("LONG_TOPIC", "islamic").strip().lower()
+    if mode not in ("islamic", "news"):
+        print(f"WARNING: unknown LONG_TOPIC {mode!r}, using islamic",
               file=sys.stderr)
-        mode = "smart-glasses"
+        mode = "islamic"
     print(f"Long video mode: {mode}")
     with open(os.path.join(br.BASE, "feeds.json"), encoding="utf-8") as f:
         feeds = json.load(f)
@@ -217,9 +217,9 @@ def main():
     print(f"Stories: {len(stories)}")
     segments = []  # dicts (see br.make_segment)
     for i, st in enumerate(stories):
-        # Smart-glasses mode always uses smart-glasses visuals; news mode
-        # maps the title to its topic (English keywords).
-        topic = SMART_TOPIC if mode == "smart-glasses" else br.topic_for(st["title"])
+        # Islamic mode always uses Islamic visuals; news mode maps the
+        # title to its topic (English keywords).
+        topic = ISLAM_TOPIC if mode == "islamic" else br.topic_for(st["title"])
         visuals = story_visuals(st, i, font, topic, pool, used)
         title_png = os.path.join(br.ASSETS, f"l{i}_title.png")
         br.render_title_png(st["title"], title_png, font, size=64)

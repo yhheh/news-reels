@@ -11,9 +11,16 @@ Usage (defaults = the Reel, unchanged behavior):
 --mode reel: uploads as a Short (title + " #Shorts", shorts URL).
 --mode long: uploads as a regular video (plain title, watch URL).
 Title/description/tags/category come from the stories file (first entry's
-"topic": "news" or "smart-glasses"); the title is the first story's title,
+"topic": "news" or "islamic"); the title is the first story's title,
 never a hardcoded topic string. If the stories file is missing, sensible
 English defaults are used.
+
+After a successful upload, a top-level comment with the website link is
+posted on the video (commentThreads.insert). It is NOT pinned — the API
+cannot pin comments; pinning is manual in YouTube Studio/app. Posting
+the comment needs the youtube.force-ssl OAuth scope in addition to
+youtube.upload (see main()); if the stored refresh token lacks that
+scope, the comment post fails with a warning and the upload still stands.
 """
 import argparse
 import json
@@ -30,19 +37,54 @@ VIDEO = os.path.join(BASE, "out", "reel.mp4")
 STORIES = os.path.join(BASE, "out", "stories.json")
 
 # Per (mode, topic): description intro, tags, category.
-# 25 = News & Politics, 28 = Science & Technology.
+# 25 = News & Politics, 27 = Education.
 META = {
     ("reel", "news"): ("The most important news in one minute.",
                        ["news", "breaking", "world news", "Shorts"], "25"),
-    ("reel", "smart-glasses"): ("Smart glasses news and explainers in one minute.",
-                                ["smart glasses", "AR glasses", "technology",
-                                 "news", "Shorts"], "28"),
+    ("reel", "islamic"): ("An introduction to Islam in one minute.",
+                          ["islam", "what is islam", "islamic",
+                           "Shorts"], "27"),
     ("long", "news"): ("The most important news in this video.",
                        ["news", "breaking", "world news"], "25"),
-    ("long", "smart-glasses"): ("Smart glasses news and explainers.",
-                                ["smart glasses", "AR glasses", "technology",
-                                 "news"], "28"),
+    ("long", "islamic"): ("An introduction to Islam.",
+                          ["islam", "what is islam", "islamic"], "27"),
 }
+
+# Top-level comment posted on every uploaded video (same text for the
+# Reel and the long video, both topics). The link in a comment IS
+# clickable, so viewers get a working link to the site. The YouTube Data
+# API cannot pin a comment programmatically — pinning is manual in
+# YouTube Studio/app — so this is posted as a regular top-level comment
+# (it is the first comment on the video). Posting a comment needs the
+# youtube.force-ssl OAuth scope (youtube.upload alone is not enough);
+# see the scopes in main() — the stored refresh token must have been
+# granted that scope, otherwise the post fails and a warning is printed.
+COMMENT_TEXT = ("For more news, visit our website: "
+                "https://breaking-news-en.vercel.app")
+
+
+def post_comment(yt, video_id):
+    """Post COMMENT_TEXT as a top-level comment on video_id.
+    Returns the comment thread id on success, None on failure (the
+    failure is printed as a warning; the upload itself already
+    succeeded, so this never raises)."""
+    try:
+        resp = yt.commentThreads().insert(
+            part="snippet",
+            body={"snippet": {
+                "videoId": video_id,
+                "topLevelComment": {"snippet": {"textOriginal": COMMENT_TEXT}},
+            }}).execute()
+        cid = (resp.get("id") or "")
+        print(f"COMMENT POSTED on {video_id} (thread {cid})")
+        return cid
+    except Exception as ex:
+        print("WARNING: could not post the website comment on "
+              f"{video_id}: {ex} "
+              "(comment posting needs the youtube.force-ssl OAuth scope — "
+              "re-authorize the YouTube OAuth token with that scope)",
+              file=sys.stderr)
+        return None
 
 
 def main():
@@ -71,7 +113,14 @@ def main():
         token_uri="https://oauth2.googleapis.com/token",
         client_id=cid,
         client_secret=csec,
-        scopes=["https://www.googleapis.com/auth/youtube.upload"],
+        # youtube.upload covers the video upload; youtube.force-ssl is
+        # needed to post the website comment (commentThreads.insert).
+        # NOTE: the stored refresh token must have been granted the
+        # force-ssl scope too — if it was only granted youtube.upload,
+        # the comment post will fail (see post_comment) until the token
+        # is re-authorized with that scope.
+        scopes=["https://www.googleapis.com/auth/youtube.upload",
+                "https://www.googleapis.com/auth/youtube.force-ssl"],
     )
     creds.refresh(Request())
     yt = build("youtube", "v3", credentials=creds)
@@ -86,7 +135,7 @@ def main():
     titles = [s.get("title", "") for s in entries if s.get("title")]
     topic = (entries[0].get("topic") if entries and entries[0].get("topic")
              else "news")
-    if topic not in ("news", "smart-glasses"):
+    if topic not in ("news", "islamic"):
         topic = "news"
     first = (titles[0][:95] if titles else "Breaking News")
     intro, tags, category = META[(args.mode, topic)]
@@ -127,6 +176,9 @@ def main():
     print(f"UPLOADED: {url}")
     with open(out_json, "w", encoding="utf-8") as f:
         json.dump({"video_id": vid, "url": url}, f, ensure_ascii=False, indent=2)
+    # Website link as a top-level comment (clickable) — same for the Reel
+    # and the long video. A failed comment never fails the upload.
+    post_comment(yt, vid)
 
 
 if __name__ == "__main__":

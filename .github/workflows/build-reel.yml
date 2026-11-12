@@ -51,28 +51,28 @@ jobs:
       # EVERY run builds BOTH a Reel and a long video, with OPPOSITE topics.
       # Alternation is by github.run_number parity (run_number increments by
       # 1 on every run of this workflow, so the two formats always swap):
-      #   even run_number -> Reel = news, long video = smart glasses
-      #   odd run_number  -> Reel = smart glasses, long video = news
+      #   even run_number -> Reel = news, long video = islam
+      #   odd run_number  -> Reel = islam, long video = news
       - name: Pick alternating modes
         id: modes
         run: |
           if [ $(( ${{ github.run_number }} % 2 )) -eq 0 ]; then
-            echo "reel_smart=0" >> "$GITHUB_OUTPUT"
-            echo "long_topic=smart-glasses" >> "$GITHUB_OUTPUT"
+            echo "reel_islamic=0" >> "$GITHUB_OUTPUT"
+            echo "long_topic=islamic" >> "$GITHUB_OUTPUT"
           else
-            echo "reel_smart=1" >> "$GITHUB_OUTPUT"
+            echo "reel_islamic=1" >> "$GITHUB_OUTPUT"
             echo "long_topic=news" >> "$GITHUB_OUTPUT"
           fi
       - name: Show modes
         run: |
-          echo "Run #${{ github.run_number }}: Reel smart-glasses=${{ steps.modes.outputs.reel_smart }}, long video topic=${{ steps.modes.outputs.long_topic }}"
+          echo "Run #${{ github.run_number }}: Reel islamic=${{ steps.modes.outputs.reel_islamic }}, long video topic=${{ steps.modes.outputs.long_topic }}"
       - name: Build the Reel
         env:
           PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
-          SMART_GLASSES_ONLY: ${{ steps.modes.outputs.reel_smart }}
-          SMART_ROTATION_SEED: ${{ github.run_number }}
+          ISLAMIC_ONLY: ${{ steps.modes.outputs.reel_islamic }}
+          ISLAMIC_ROTATION_SEED: ${{ github.run_number }}
         run: python build_reel.py
       - name: Build the long video
         env:
@@ -80,7 +80,7 @@ jobs:
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
           LONG_TOPIC: ${{ steps.modes.outputs.long_topic }}
-          SMART_ROTATION_SEED: ${{ github.run_number }}
+          ISLAMIC_ROTATION_SEED: ${{ github.run_number }}
         run: python build_long_video.py
       - name: Upload Reel as artifact
         if: hashFiles('out/reel.mp4') != ''

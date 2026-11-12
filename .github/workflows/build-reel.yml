@@ -3,8 +3,11 @@ name: Build News Reel
 on:
   workflow_dispatch:
   schedule:
-    # 6 times a day (UTC): 06:00, 10:00, 14:00, 18:00, 22:00, 02:00
-    - cron: "0 6,10,14,18,22,2 * * *"
+    # 3 batches a day (UTC): 06:00, 14:00, 22:00 — every 8 hours.
+    # Each batch builds AND uploads BOTH a Reel and a long video
+    # (6 uploads/day ≈ 9,600 YouTube API units, inside the free 10,000/day
+    # quota; each upload costs 1,600 units).
+    - cron: "0 6,14,22 * * *"
 
 jobs:
   build:
@@ -19,9 +22,67 @@ jobs:
           python-version: "3.11"
       - name: Install dependencies
         run: pip install -q -r requirements.txt
+      # Media pool (data/media_pool/): pre-fetched visuals + pre-rendered
+      # template audio, so the builders pick ready files instead of calling
+      # the live APIs for every story. Runners are ephemeral, so the pool
+      # survives between runs ONLY via this cache. Key = current ISO week:
+      # a new week misses the exact key, restores last week's pool via
+      # restore-keys, the pre-fetch step tops it up, and the post-step saves
+      # it under the new key. (Within a week, later runs restore the pool
+      # saved by the first run of the week; their own top-ups are NOT
+      # re-saved — they are re-fetched cheaply instead. Pool files are never
+      # committed to the repo: too heavy, ~44 video clips.)
+      - name: Pool cache key
+        id: poolkey
+        run: echo "week=$(date -u +%Y-W%V)" >> "$GITHUB_OUTPUT"
+      - name: Restore media pool cache
+        uses: actions/cache@v4
+        with:
+          path: data/media_pool
+          key: media-pool-${{ steps.poolkey.outputs.week }}
+          restore-keys: |
+            media-pool-
+      - name: Pre-fetch media pool
+        env:
+          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
+        run: python scripts/prefetch_media.py
+      # EVERY run builds BOTH a Reel and a long video, with OPPOSITE topics.
+      # Alternation is by github.run_number parity (run_number increments by
+      # 1 on every run of this workflow, so the two formats always swap):
+      #   even run_number -> Reel = news, long video = smart glasses
+      #   odd run_number  -> Reel = smart glasses, long video = news
+      - name: Pick alternating modes
+        id: modes
+        run: |
+          if [ $(( ${{ github.run_number }} % 2 )) -eq 0 ]; then
+            echo "reel_smart=0" >> "$GITHUB_OUTPUT"
+            echo "long_topic=smart-glasses" >> "$GITHUB_OUTPUT"
+          else
+            echo "reel_smart=1" >> "$GITHUB_OUTPUT"
+            echo "long_topic=news" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Show modes
+        run: echo "Run #${{ github.run_number }}: Reel smart-glasses=${{ steps.modes.outputs.reel_smart }}, long video topic=${{ steps.modes.outputs.long_topic }}"
       - name: Build the Reel
+        env:
+          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
+          SMART_GLASSES_ONLY: ${{ steps.modes.outputs.reel_smart }}
+          SMART_ROTATION_SEED: ${{ github.run_number }}
         run: python build_reel.py
+      - name: Build the long video
+        env:
+          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
+          LONG_TOPIC: ${{ steps.modes.outputs.long_topic }}
+          SMART_ROTATION_SEED: ${{ github.run_number }}
+        run: python build_long_video.py
       - name: Upload Reel as artifact
+        if: hashFiles('out/reel.mp4') != ''
         uses: actions/upload-artifact@v4
         with:
           name: news-reel
@@ -29,9 +90,26 @@ jobs:
             out/reel.mp4
             out/stories.json
           retention-days: 7
-      - name: Upload to YouTube
+      - name: Upload long video as artifact
+        if: hashFiles('out/long_video.mp4') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: news-long-video
+          path: |
+            out/long_video.mp4
+            out/long_stories.json
+          retention-days: 7
+      - name: Upload Reel to YouTube
+        if: hashFiles('out/reel.mp4') != ''
         env:
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
         run: python upload_youtube.py
+      - name: Upload long video to YouTube
+        if: hashFiles('out/long_video.mp4') != ''
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        run: python upload_youtube.py --file out/long_video.mp4 --stories out/long_stories.json --mode long

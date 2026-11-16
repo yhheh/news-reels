@@ -17,10 +17,10 @@ English defaults are used.
 
 After a successful upload, a top-level comment with the website link is
 posted on the video (commentThreads.insert). It is NOT pinned — the API
-cannot pin comments; pinning is manual in YouTube Studio/app. Posting
-the comment needs the youtube.force-ssl OAuth scope in addition to
-youtube.upload (see main()); if the stored refresh token lacks that
-scope, the comment post fails with a warning and the upload still stands.
+cannot pin comments; pinning is manual in YouTube Studio/app. The
+comment uses its OWN credentials with the youtube.force-ssl scope
+(see post_comment); if the stored refresh token lacks that scope, the
+comment post fails with a warning and the upload still stands.
 """
 import argparse
 import json
@@ -56,28 +56,39 @@ META = {
 # API cannot pin a comment programmatically — pinning is manual in
 # YouTube Studio/app — so this is posted as a regular top-level comment
 # (it is the first comment on the video). Posting a comment needs the
-# youtube.force-ssl OAuth scope (youtube.upload alone is not enough);
-# see the scopes in main() — the stored refresh token must have been
-# granted that scope, otherwise the post fails and a warning is printed.
+# youtube.force-ssl OAuth scope; post_comment() builds its OWN
+# credentials with that scope, so a stored token that lacks it fails
+# there (warning only) and never breaks the upload.
 COMMENT_TEXT = ("For more news, visit our website: "
                 "https://breaking-news-en.vercel.app")
 
 
-def post_comment(yt, video_id):
+def post_comment(cid, csec, rtok, video_id):
     """Post COMMENT_TEXT as a top-level comment on video_id.
-    Returns the comment thread id on success, None on failure (the
-    failure is printed as a warning; the upload itself already
-    succeeded, so this never raises)."""
+    Builds its OWN credentials with the youtube.force-ssl scope only,
+    so a stored token that lacks that scope fails HERE (warning) and
+    never breaks the video upload. Returns the comment thread id on
+    success, None on failure (never raises)."""
     try:
+        creds = Credentials(
+            token=None,
+            refresh_token=rtok,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=cid,
+            client_secret=csec,
+            scopes=["https://www.googleapis.com/auth/youtube.force-ssl"],
+        )
+        creds.refresh(Request())
+        yt = build("youtube", "v3", credentials=creds)
         resp = yt.commentThreads().insert(
             part="snippet",
             body={"snippet": {
                 "videoId": video_id,
                 "topLevelComment": {"snippet": {"textOriginal": COMMENT_TEXT}},
             }}).execute()
-        cid = (resp.get("id") or "")
-        print(f"COMMENT POSTED on {video_id} (thread {cid})")
-        return cid
+        thread = (resp.get("id") or "")
+        print(f"COMMENT POSTED on {video_id} (thread {thread})")
+        return thread
     except Exception as ex:
         print("WARNING: could not post the website comment on "
               f"{video_id}: {ex} "
@@ -113,14 +124,11 @@ def main():
         token_uri="https://oauth2.googleapis.com/token",
         client_id=cid,
         client_secret=csec,
-        # youtube.upload covers the video upload; youtube.force-ssl is
-        # needed to post the website comment (commentThreads.insert).
-        # NOTE: the stored refresh token must have been granted the
-        # force-ssl scope too — if it was only granted youtube.upload,
-        # the comment post will fail (see post_comment) until the token
-        # is re-authorized with that scope.
-        scopes=["https://www.googleapis.com/auth/youtube.upload",
-                "https://www.googleapis.com/auth/youtube.force-ssl"],
+        # Upload only: the stored refresh token was granted
+        # youtube.upload. The comment uses its OWN credentials with the
+        # force-ssl scope (see post_comment) so a missing comment scope
+        # can never break the upload.
+        scopes=["https://www.googleapis.com/auth/youtube.upload"],
     )
     creds.refresh(Request())
     yt = build("youtube", "v3", credentials=creds)
@@ -178,7 +186,7 @@ def main():
         json.dump({"video_id": vid, "url": url}, f, ensure_ascii=False, indent=2)
     # Website link as a top-level comment (clickable) — same for the Reel
     # and the long video. A failed comment never fails the upload.
-    post_comment(yt, vid)
+    post_comment(cid, csec, rtok, vid)
 
 
 if __name__ == "__main__":

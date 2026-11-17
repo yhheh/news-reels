@@ -3,12 +3,12 @@ name: Build News Reel
 on:
   workflow_dispatch:
   schedule:
-    # 3 batches a day (UTC): 06:00, 14:00, 22:00 — every 8 hours.
+    # 48 videos a day (UTC): every hour, on the hour.
     # Each batch builds AND uploads BOTH a Reel and a long video
-    # (6 uploads/day; YouTube quota is 100 video uploads/day per
+    # (48 uploads/day; YouTube quota is 100 video uploads/day per
     # project (videos.insert in its own bucket) + 10,000 units for
     # other calls — quota is not the blocker).
-    - cron: "0 6,14,22 * * *"
+    - cron: "0 * * * *"
 
 jobs:
   build:

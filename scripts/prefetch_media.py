@@ -7,12 +7,12 @@ ready visuals/audio instead of calling the live APIs for every story:
 
 VISUALS (per stock topic in build_reel.TOPICS — news topics + "islam
 mosque"):
-  Pexels photos (3/topic) + Unsplash photos (2/topic) + Pixabay video
-  clips (2 portrait + 2 landscape per topic) + Pexels video clips
-  (2 portrait + 2 landscape per topic, dormant while Pexels pauses new
+  Pexels photos (6/topic) + Unsplash photos (4/topic) + Pixabay video
+  clips (4 portrait + 4 landscape per topic) + Pexels video clips
+  (4 portrait + 4 landscape per topic, dormant while Pexels pauses new
   keys). Free stock only, no RSS/agency visuals. Files already in the
-  pool are skipped (top-up only); the pool is pruned to 6 photos /
-  6 videos per topic.
+  pool are skipped (top-up only); the pool is pruned to 12 photos /
+  12 videos per topic.
 
 AUDIO (only fixed texts can be pre-rendered):
   For every built-in Islamic topic (build_reel.ISLAM_TOPICS) the
@@ -36,7 +36,7 @@ runners, and the builders still pick the pooled file.
 PERSISTENCE: GitHub Actions runners are ephemeral — the pool only survives
 between runs via the Actions cache (see .github/workflows/build-reel.yml:
 weekly cache key, restore-keys fallback). Pool files are NEVER committed
-to the repo (too heavy: ~44 video clips).
+to the repo (too heavy: ~88 video clips + ~110 photos).
 
 Usage: python scripts/prefetch_media.py [--topics q1,q2] [--skip-visuals]
        [--skip-audio]
@@ -56,14 +56,14 @@ POOL_DIR = br.POOL_DIR
 POOL_INDEX = br.POOL_INDEX
 VOICE = br.EN_VOICE
 
-PEXELS_PHOTOS = 3      # Pexels photos per topic
-UNSPLASH_PHOTOS = 2    # Unsplash photos per topic
-PIXABAY_VIDEOS_PORTRAIT = 2    # Pixabay video clips (portrait) per topic
-PIXABAY_VIDEOS_LANDSCAPE = 2   # Pixabay video clips (landscape) per topic
-VIDEOS_PORTRAIT = 2    # Pexels video clips (portrait) per topic
-VIDEOS_LANDSCAPE = 2   # Pexels video clips (landscape) per topic
-MAX_PHOTOS_TOPIC = 6   # prune cap per topic
-MAX_VIDEOS_TOPIC = 6   # prune cap per topic
+PEXELS_PHOTOS = 6      # Pexels photos per topic
+UNSPLASH_PHOTOS = 4    # Unsplash photos per topic
+PIXABAY_VIDEOS_PORTRAIT = 4    # Pixabay video clips (portrait) per topic
+PIXABAY_VIDEOS_LANDSCAPE = 4   # Pixabay video clips (landscape) per topic
+VIDEOS_PORTRAIT = 4    # Pexels video clips (portrait) per topic
+VIDEOS_LANDSCAPE = 4   # Pexels video clips (landscape) per topic
+MAX_PHOTOS_TOPIC = 12   # prune cap per topic
+MAX_VIDEOS_TOPIC = 12   # prune cap per topic
 
 # (format, max narration chars, silent-audio seconds) per template render
 AUDIO_FORMATS = (("reel", 220, 12), ("long", 400, 28))

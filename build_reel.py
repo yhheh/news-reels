@@ -849,9 +849,10 @@ def pool_pick(pool, topic, kind, orientation, n, used, strict=False):
     Fresh = file not yet used in this run, by local path AND by visual
     identity (_pool_key) — a clip can exist both as a pool file and as a
     live-fetch result, so the key check keeps the same clip from being
-    picked twice in one video. strict=True (news mode): return ONLY
-    fresh entries, never fall back to already-used ones. strict=False
-    (islamic mode): fresh first, then stale as fallback (old behaviour)."""
+    picked twice in one video. strict=True: return ONLY
+    fresh entries, never fall back to already-used ones (now used for
+    BOTH news and Islamic videos). strict=False: fresh first, then
+    stale as fallback (old behaviour, no longer used by the builders)."""
     cands = [e for e in pool
              if e.get("topic") == topic and e.get("kind") == kind]
     rank = lambda e: _orient_rank(e.get("orientation"), orientation)
@@ -908,10 +909,11 @@ def gather_visuals(pool, topic, prefix, n, orientation, used, font, story_title,
     collide in the set). Every visual picked here is recorded both ways,
     so the same clip/photo is never picked twice in one video. Live
     fetches are skipped when their key is already in `used`.
-    strict=True (news mode): never repeat a visual in this video — if a
+    strict=True: never repeat a visual in this video — if a
     story still has fewer than n visuals, the remaining slots are filled
-    with a generated title card, never by repeating visuals[0].
-    strict=False (islamic mode): the old reuse fallback is kept.
+    with a generated title card, never by repeating visuals[0] (now
+    used for BOTH news and Islamic videos).
+    strict=False: the old reuse fallback is kept (no longer used).
     query: specific story keywords (see story_keywords), may be "".
     Live searches try the specific query FIRST, then the broad `topic`
     to fill up; pool steps always use the broad topic.
@@ -1063,11 +1065,11 @@ def main():
     font = get_font()
     pool = load_pool()
     used = set()  # visuals already used in THIS video, by local path and
-    # by "provider:provider_id" key (see gather_visuals) — news mode
-    # never repeats a clip/photo within one video.
-    # strict = news mode only: no-repeat applies to news stories; Islamic
-    # mode keeps the old reuse fallback.
-    strict = not islam_only
+    # by "provider:provider_id" key (see gather_visuals) — no clip/photo
+    # is ever repeated within one video (news and Islamic alike).
+    # strict = no-repeat applies to BOTH news and Islamic videos: no clip
+    # or photo is repeated within one video (his order 2026-11-17).
+    strict = True
     print(f"Media pool: {len(pool)} file(s)")
     print(f"Stories: {len(stories)}")
     segments = []  # dicts (see make_segment)

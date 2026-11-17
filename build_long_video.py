@@ -66,8 +66,9 @@ def story_visuals(st, i, font, topic, pool, used, strict=False):
     """Up to 3 visuals for one story: the shared pool-first chain
     (build_reel.gather_visuals) — pooled clips/photos, then live Pexels
     videos (landscape), then live photos, then title card.
-    strict (True = news mode): no visual is repeated within this video;
-    False (islamic mode): the old reuse fallback is kept.
+    strict (True): no visual is repeated within this video — now
+    used for BOTH news and Islamic videos; False keeps the old reuse
+    fallback (no longer used).
     The live searches use the story's own keywords (br.story_keywords)
     first, so the visuals match the story being narrated.
     Returns [(path, "video"|"image")], never empty."""
@@ -218,9 +219,9 @@ def main():
     font = br.get_font()
     pool = br.load_pool()
     used = set()  # visuals already used in THIS video (see br.gather_visuals)
-    # strict = news mode only: no-repeat applies to news stories; Islamic
-    # mode keeps the old reuse fallback.
-    strict = (mode == "news")
+    # strict = no-repeat applies to BOTH news and Islamic videos: no clip
+    # or photo is repeated within one video (his order 2026-11-17).
+    strict = True
     print(f"Media pool: {len(pool)} file(s)")
     print(f"Stories: {len(stories)}")
     segments = []  # dicts (see br.make_segment)

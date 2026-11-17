@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   schedule:
     # 48 videos a day (UTC): every hour, on the hour.
+    # Schedule re-registered 2026-11-17 ~23:00 UTC to wake the scheduler.
     # Each batch builds AND uploads BOTH a Reel and a long video
     # (48 uploads/day; YouTube quota is 100 video uploads/day per
     # project (videos.insert in its own bucket) + 10,000 units for

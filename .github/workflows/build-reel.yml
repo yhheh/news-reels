@@ -5,8 +5,9 @@ on:
   schedule:
     # 3 batches a day (UTC): 06:00, 14:00, 22:00 — every 8 hours.
     # Each batch builds AND uploads BOTH a Reel and a long video
-    # (6 uploads/day ≈ 9,600 YouTube API units, inside the free 10,000/day
-    # quota; each upload costs 1,600 units).
+    # (6 uploads/day; YouTube quota is 100 video uploads/day per
+    # project (videos.insert in its own bucket) + 10,000 units for
+    # other calls — quota is not the blocker).
     - cron: "0 6,14,22 * * *"
 
 jobs:

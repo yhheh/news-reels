@@ -310,6 +310,51 @@ def topic_for(title):
     return "news city"
 
 
+# English stopwords dropped from story titles when building a specific
+# visual-search query (the generic words add nothing to a stock search).
+STOPWORDS = {
+    "the", "a", "an", "in", "on", "of", "to", "for", "and", "with",
+    "after", "before", "is", "are", "was", "were", "be", "been", "by",
+    "at", "as", "it", "its", "this", "that", "from", "into", "over",
+    "under", "about", "between", "through", "during", "above", "below",
+    "up", "down", "out", "off", "again", "further", "then", "once",
+    "here", "there", "when", "where", "why", "how", "all", "any", "both",
+    "each", "few", "more", "most", "other", "some", "such", "no", "nor",
+    "not", "only", "own", "same", "so", "than", "too", "very", "can",
+    "will", "just", "should", "now", "has", "have", "had", "do", "does",
+    "did", "but", "or", "if", "while", "who", "whom", "which", "what",
+    "says", "said", "new",
+}
+
+
+def _content_words(text):
+    """Lowercase content words of a text: drop stopwords, words shorter
+    than 3 chars, and pure numbers; deduped, in order of appearance."""
+    words = []
+    for w in re.findall(r"[a-z0-9]+", (text or "").lower()):
+        if len(w) < 3 or w.isdigit() or w in STOPWORDS:
+            continue
+        if w not in words:
+            words.append(w)
+    return words
+
+
+def story_keywords(title, desc=""):
+    """Up to 3 specific search words for this story's visuals, taken
+    from the title first (topped up from the description if the title
+    gives fewer than 3). Space-joined, or "" if none remain. Used as
+    the specific query for live visual searches, so photos/clips match
+    the story itself instead of just its broad topic."""
+    words = _content_words(title)
+    if len(words) < 3:
+        for w in _content_words(desc):
+            if w not in words:
+                words.append(w)
+            if len(words) >= 3:
+                break
+    return " ".join(words[:3])
+
+
 def fetch_stories(feeds, limit=N_STORIES):
     stories, seen = [], set()
     for url in feeds:
@@ -745,6 +790,49 @@ def load_pool():
     return out
 
 
+def _provider_id(url):
+    """Stable provider ID from a stock URL (numeric Pexels id / Unsplash
+    photo uid / Pexels video id / Pixabay video id); md5 of the URL as a
+    fallback. Same logic as scripts/prefetch_media.py provider_id (kept
+    duplicated here on purpose: prefetch imports build_reel, so importing
+    it back would be a circular import)."""
+    m = re.search(r"/photos/(\d+)/", url)
+    if m:
+        return m.group(1)
+    m = re.search(r"/(photo-[^?/]+)", url)
+    if m:
+        return m.group(1)
+    m = re.search(r"/video-files/(\d+)/", url)
+    if m:
+        return m.group(1)
+    # Pixabay video files: /video/2023/10/22/186115-874643483_large.mp4
+    m = re.search(r"/video/\d{4}/\d{2}/\d{2}/(\d+)-", url)
+    if m:
+        return m.group(1)
+    return hashlib.md5(url.encode("utf-8")).hexdigest()[:12]
+
+
+def _url_key(provider, url):
+    """Cross-run identity of a stock visual: "provider:provider_id"."""
+    return f"{provider}:{_provider_id(url)}"
+
+
+def _pool_key(e):
+    """Identity of a pool entry, same form as _url_key.
+    Pool video entries store provider_id with an orientation suffix
+    ("12345_portrait"); it is stripped so the key matches the key of
+    the same clip fetched live (which has no suffix) — otherwise a clip
+    used from the pool could be picked again from a live fetch in the
+    same video."""
+    pid = e.get("provider_id", "") or ""
+    if e.get("kind") == "video":
+        for suf in ("_portrait", "_landscape"):
+            if pid.endswith(suf):
+                pid = pid[:-len(suf)]
+                break
+    return f"{e.get('provider', '')}:{pid}"
+
+
 def _orient_rank(entry_orientation, want):
     """0 = exact orientation match, 1 = square/any, 2 = opposite (ffmpeg
     crops it anyway, so it is still usable as a last resort)."""
@@ -756,14 +844,25 @@ def _orient_rank(entry_orientation, want):
     return 2
 
 
-def pool_pick(pool, topic, kind, orientation, n, used):
-    """Up to n pool entries for (topic, kind), best orientation first,
-    preferring files not yet used in this run (reuse only when exhausted)."""
+def pool_pick(pool, topic, kind, orientation, n, used, strict=False):
+    """Up to n pool entries for (topic, kind), best orientation first.
+    Fresh = file not yet used in this run, by local path AND by visual
+    identity (_pool_key) — a clip can exist both as a pool file and as a
+    live-fetch result, so the key check keeps the same clip from being
+    picked twice in one video. strict=True (news mode): return ONLY
+    fresh entries, never fall back to already-used ones. strict=False
+    (islamic mode): fresh first, then stale as fallback (old behaviour)."""
     cands = [e for e in pool
              if e.get("topic") == topic and e.get("kind") == kind]
     rank = lambda e: _orient_rank(e.get("orientation"), orientation)
-    fresh = sorted([e for e in cands if e["local"] not in used], key=rank)
-    stale = sorted([e for e in cands if e["local"] in used], key=rank)
+
+    def _fresh(e):
+        return e["local"] not in used and _pool_key(e) not in used
+
+    fresh = sorted([e for e in cands if _fresh(e)], key=rank)
+    if strict:
+        return fresh[:n]
+    stale = sorted([e for e in cands if not _fresh(e)], key=rank)
     return (fresh + stale)[:n]
 
 
@@ -781,64 +880,140 @@ def pool_audio(narr, voice):
     return None
 
 
-def gather_visuals(pool, topic, prefix, n, orientation, used, font, story_title):
+def _fetch_specific_first(fetch, query, topic, need, **kw):
+    """Live-search URLs for one provider: the specific story `query`
+    first; if it returns fewer than `need` URLs, also try the broad
+    `topic` and combine both lists (specific first), deduped by URL.
+    `fetch` is called as fetch(q, **kw). `query` may be "" (then only
+    the broad topic is tried)."""
+    urls, seen = [], set()
+    for q in ([query] if query else []) + [topic]:
+        for u in fetch(q, **kw):
+            if u not in seen:
+                seen.add(u)
+                urls.append(u)
+        if len(urls) >= need:
+            break
+    return urls
+
+
+def gather_visuals(pool, topic, prefix, n, orientation, used, font, story_title, strict=False, query=""):
     """Visuals for one story, pool FIRST:
     pooled video clips -> live Pixabay videos -> live Pexels videos
     (dormant while Pexels pauses new keys) -> pooled photos -> live photos
-    (Pexels -> Unsplash -> Openverse) -> reuse -> title card.
+    (Pexels -> Unsplash -> Openverse) -> title card.
     orientation: "portrait" (vertical Reels) or "landscape" (long video).
+    `used` is the within-run record of visuals already picked in this
+    video: local paths AND "provider:provider_id" keys (they cannot
+    collide in the set). Every visual picked here is recorded both ways,
+    so the same clip/photo is never picked twice in one video. Live
+    fetches are skipped when their key is already in `used`.
+    strict=True (news mode): never repeat a visual in this video — if a
+    story still has fewer than n visuals, the remaining slots are filled
+    with a generated title card, never by repeating visuals[0].
+    strict=False (islamic mode): the old reuse fallback is kept.
+    query: specific story keywords (see story_keywords), may be "".
+    Live searches try the specific query FIRST, then the broad `topic`
+    to fill up; pool steps always use the broad topic.
     Returns [(path, "video"|"image")], never empty."""
     visuals = []
     # 0. Pooled video clips (pre-fetched, already validated).
-    for e in pool_pick(pool, topic, "video", orientation, n, used):
+    for e in pool_pick(pool, topic, "video", orientation, n, used, strict):
         visuals.append((e["local"], "video"))
         used.add(e["local"])
+        used.add(_pool_key(e))
         print(f"  pool video: {os.path.basename(e['local'])}")
     # 1. Live Pixabay video clips (first live video source — Pexels new
     # keys are paused, so Pixabay carries the video slots for now).
+    # Specific story query first, broad topic to fill up.
     if len(visuals) < n:
-        for j, u in enumerate(pixabay_videos(topic, n=6, orientation=orientation)):
+        need = n - len(visuals)
+        for j, u in enumerate(_fetch_specific_first(
+                pixabay_videos, query, topic, need, n=6,
+                orientation=orientation)):
+            if _url_key("pixabay", u) in used:
+                continue
             p = os.path.join(ASSETS, f"{prefix}_pbvid{j}.mp4")
             if download(u, p, min_bytes=100_000) and probe_duration(p) > 0:
                 visuals.append((p, "video"))
+                used.add(_url_key("pixabay", u))
             if len(visuals) >= n:
                 break
     # 2. Live Pexels video clips (dormant without a key; works again if
     # Pexels resumes issuing keys).
     if len(visuals) < n:
-        for j, u in enumerate(pexels_videos(topic, n=6, orientation=orientation)):
+        need = n - len(visuals)
+        for j, u in enumerate(_fetch_specific_first(
+                pexels_videos, query, topic, need, n=6,
+                orientation=orientation)):
+            if _url_key("pexels", u) in used:
+                continue
             p = os.path.join(ASSETS, f"{prefix}_vid{j}.mp4")
             if download(u, p, min_bytes=100_000) and probe_duration(p) > 0:
                 visuals.append((p, "video"))
+                used.add(_url_key("pexels", u))
             if len(visuals) >= n:
                 break
     # 3. Pooled photos.
     if len(visuals) < n:
         for e in pool_pick(pool, topic, "photo", orientation,
-                           n - len(visuals), used):
+                           n - len(visuals), used, strict):
             visuals.append((e["local"], "image"))
             used.add(e["local"])
+            used.add(_pool_key(e))
             print(f"  pool photo: {os.path.basename(e['local'])}")
     # 4. Live photos: Pexels (direct API) -> Unsplash (direct API) ->
     # Openverse (keyless) -> title card. No RSS/agency visuals.
+    # (url, provider) pairs — the provider is needed for the used key.
+    # Each source is tried with the specific story query first, then the
+    # broad topic to fill up.
     if len(visuals) < n:
-        urls = pexels_images(
-            topic, orientation=("landscape" if orientation == "landscape" else None))
-        if len(urls) < 6:
-            urls += unsplash_images(topic)
-        if len(urls) < 6:
-            urls += openverse_images(topic)
-        if len(urls) < 6:
-            urls += openverse_images("news")
-        for j, u in enumerate(urls[:6]):
+        need = n - len(visuals)
+        url_prov = []
+        seen = set()
+        photo_sources = [
+            (pexels_images, "pexels",
+             {"n": 8, "orientation": ("landscape" if orientation == "landscape" else None)}),
+            (unsplash_images, "unsplash", {"n": 8}),
+            (openverse_images, "openverse", {"n": 8}),
+        ]
+        for fetch, prov, kw in photo_sources:
+            for u in _fetch_specific_first(fetch, query, topic, need, **kw):
+                if u not in seen:
+                    seen.add(u)
+                    url_prov.append((u, prov))
+            if len(url_prov) >= 6:
+                break
+        if len(url_prov) < 6:
+            for u in openverse_images("news", n=8):
+                if u not in seen:
+                    seen.add(u)
+                    url_prov.append((u, "openverse"))
+        for j, (u, prov) in enumerate(url_prov):
+            if _url_key(prov, u) in used:
+                continue
             p = os.path.join(ASSETS, f"{prefix}_img{j}.jpg")
             if download(u, p):
                 visuals.append((p, "image"))
+                used.add(_url_key(prov, u))
             if len(visuals) >= n:
                 break
-    # fallback: reuse any visual we already have
-    while len(visuals) < n and visuals:
-        visuals.append(visuals[0])
+    # fallback: fill the remaining slots.
+    if len(visuals) < n:
+        if strict:
+            # News mode: never repeat a visual in this video — fill with
+            # a generated title card (not a stock clip/photo, so it is
+            # not a repeat).
+            missing = n - len(visuals)
+            card = os.path.join(ASSETS, f"{prefix}_card.jpg")
+            make_card_image(story_title, card, font)
+            visuals += [(card, "image")] * missing
+            print(f"story {prefix}: {missing} slot(s) filled with title "
+                  f"card (strict, no repeat)", file=sys.stderr)
+        else:
+            # reuse any visual we already have
+            while len(visuals) < n and visuals:
+                visuals.append(visuals[0])
     if not visuals:
         # last resort: generated title card, so the story is never skipped
         card = os.path.join(ASSETS, f"{prefix}_card.jpg")
@@ -887,7 +1062,12 @@ def main():
 
     font = get_font()
     pool = load_pool()
-    used = set()  # pool files already used in this run (avoid repeats)
+    used = set()  # visuals already used in THIS video, by local path and
+    # by "provider:provider_id" key (see gather_visuals) — news mode
+    # never repeats a clip/photo within one video.
+    # strict = news mode only: no-repeat applies to news stories; Islamic
+    # mode keeps the old reuse fallback.
+    strict = not islam_only
     print(f"Media pool: {len(pool)} file(s)")
     print(f"Stories: {len(stories)}")
     segments = []  # dicts (see make_segment)
@@ -896,8 +1076,11 @@ def main():
         # title to its topic (English keywords).
         topic = (ISLAM_VISUAL_TOPIC if islam_only
                  else topic_for(st["title"]))
+        # Specific visual query from the story itself, so the clips/photos
+        # match the story being narrated, not just its broad topic.
+        sq = story_keywords(st["title"], st.get("desc", ""))
         visuals = gather_visuals(pool, topic, f"s{i}", N_IMG, "portrait",
-                                 used, font, st["title"])
+                                 used, font, st["title"], strict, query=sq)
         title_png = os.path.join(ASSETS, f"s{i}_title.png")
         render_title_png(st["title"], title_png, font)
         # narration: title + short summary (fits ~12s). Template topics use
@@ -920,8 +1103,15 @@ def main():
             if not make_voice(narr, audio, voice=voice):
                 audio = None
         n_vid = sum(1 for _, k in visuals if k == "video")
+        # Audio-visual sync: the segment must last at least as long as
+        # its narration, so the photos and on-screen text stay up until
+        # the voice finishes. Falls back to STORY_SEC if the duration
+        # cannot be measured (audio missing/unreadable).
+        audio_dur = story_audio_len(audio) if audio else 0.0
+        seg_dur = max(STORY_SEC, audio_dur) if audio_dur > 0 else STORY_SEC
         print(f"story {i}: {st['title'][:60]} | visuals={len(visuals)} "
-              f"(video={n_vid}) | audio={audio_src if audio else 'NO'}")
+              f"(video={n_vid}) | audio={audio_src if audio else 'NO'} "
+              f"| seg={seg_dur:.1f}s")
         # Presenter interstitial BEFORE this story (except the first one):
         # a brief slice of the presenter clip, visual only — this story's
         # narration starts over it, so the story segment below skips those
@@ -933,7 +1123,7 @@ def main():
             if inter is not None:
                 segments.append(inter)
                 story_skip = PRESENTER_SEC if audio else 0.0
-        segments.append(make_segment(visuals, title_png, audio, STORY_SEC,
+        segments.append(make_segment(visuals, title_png, audio, seg_dur,
                                       a_start=story_skip))
 
     # End CTA (his order: every Reel ends with a site-visit call, voice +
@@ -992,8 +1182,12 @@ def assemble_reel(segments, out_mp4):
         vis_indices = []
         for p, kind in visuals:
             if kind == "video":
-                # real clip: trim to vis_dur, drop its own audio (voiceover covers it)
-                inputs += ["-t", str(vis_dur), "-an", "-i", p]
+                # real clip: loop to fill vis_dur, drop its own audio
+                # (voiceover covers it). The loop matters when a story
+                # segment is extended to match a long narration: a short
+                # clip must not end early and leave the segment short.
+                inputs += ["-stream_loop", "-1", "-t", str(vis_dur),
+                           "-an", "-i", p]
             else:
                 inputs += ["-loop", "1", "-t", str(vis_dur), "-i", p]
             vis_indices.append(idx)

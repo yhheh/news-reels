@@ -62,13 +62,18 @@ def fetch_long_stories(feeds, mode):
     return real + templates
 
 
-def story_visuals(st, i, font, topic, pool, used):
+def story_visuals(st, i, font, topic, pool, used, strict=False):
     """Up to 3 visuals for one story: the shared pool-first chain
     (build_reel.gather_visuals) — pooled clips/photos, then live Pexels
     videos (landscape), then live photos, then title card.
+    strict (True = news mode): no visual is repeated within this video;
+    False (islamic mode): the old reuse fallback is kept.
+    The live searches use the story's own keywords (br.story_keywords)
+    first, so the visuals match the story being narrated.
     Returns [(path, "video"|"image")], never empty."""
+    sq = br.story_keywords(st["title"], st.get("desc", ""))
     return br.gather_visuals(pool, topic, f"l{i}", L_N_VIS, "landscape",
-                              used, font, st["title"])
+                              used, font, st["title"], strict, query=sq)
 
 
 def assemble_long(segments, out_mp4):
@@ -212,7 +217,10 @@ def main():
 
     font = br.get_font()
     pool = br.load_pool()
-    used = set()  # pool files already used in this run (avoid repeats)
+    used = set()  # visuals already used in THIS video (see br.gather_visuals)
+    # strict = news mode only: no-repeat applies to news stories; Islamic
+    # mode keeps the old reuse fallback.
+    strict = (mode == "news")
     print(f"Media pool: {len(pool)} file(s)")
     print(f"Stories: {len(stories)}")
     segments = []  # dicts (see br.make_segment)
@@ -220,7 +228,7 @@ def main():
         # Islamic mode always uses Islamic visuals; news mode maps the
         # title to its topic (English keywords).
         topic = ISLAM_TOPIC if mode == "islamic" else br.topic_for(st["title"])
-        visuals = story_visuals(st, i, font, topic, pool, used)
+        visuals = story_visuals(st, i, font, topic, pool, used, strict)
         title_png = os.path.join(br.ASSETS, f"l{i}_title.png")
         br.render_title_png(st["title"], title_png, font, size=64)
         # narration: title + longer summary (~30s). Template topics use
@@ -243,8 +251,15 @@ def main():
             if not br.make_voice(narr, audio, voice=EN_VOICE):
                 audio = None
         n_vid = sum(1 for _, k in visuals if k == "video")
+        # Audio-visual sync: the segment must last at least as long as
+        # its narration, so the photos and on-screen text stay up until
+        # the voice finishes. Falls back to L_STORY_SEC if the duration
+        # cannot be measured (audio missing/unreadable).
+        audio_dur = br.story_audio_len(audio) if audio else 0.0
+        seg_dur = max(L_STORY_SEC, audio_dur) if audio_dur > 0 else L_STORY_SEC
         print(f"story {i}: {st['title'][:60]} | visuals={len(visuals)} "
-              f"(video={n_vid}) | audio={audio_src if audio else 'NO'}")
+              f"(video={n_vid}) | audio={audio_src if audio else 'NO'} "
+              f"| seg={seg_dur:.1f}s")
         # Presenter interstitial BEFORE this story (except the first one):
         # a brief slice of the presenter clip, visual only — this story's
         # narration starts over it, so the story segment below skips those
@@ -258,7 +273,7 @@ def main():
                 segments.append(inter)
                 story_skip = br.PRESENTER_SEC if audio else 0.0
         segments.append(br.make_segment(visuals, title_png, audio,
-                                        L_STORY_SEC, a_start=story_skip))
+                                        seg_dur, a_start=story_skip))
 
     # End CTA: same site-visit call as the Reels (English channel, 30s here).
     cta_card = os.path.join(br.ASSETS, "lcta_card.jpg")

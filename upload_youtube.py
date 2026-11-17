@@ -15,17 +15,22 @@ Title/description/tags/category come from the stories file (first entry's
 never a hardcoded topic string. If the stories file is missing, sensible
 English defaults are used.
 
-After a successful upload, a top-level comment with the website link is
-posted on the video (commentThreads.insert). It is NOT pinned — the API
-cannot pin comments; pinning is manual in YouTube Studio/app. The
-comment uses its OWN credentials with the youtube.force-ssl scope
-(see post_comment); if the stored refresh token lacks that scope, the
-comment post fails with a warning and the upload still stands.
+After a successful upload, a custom thumbnail is set from a frame of
+the video (thumbnails.set, ~50 units) and a top-level comment with the
+website link is posted on the video (commentThreads.insert). The
+thumbnail is NOT pinned — the API cannot pin comments; pinning is manual
+in YouTube Studio/app. The comment uses its OWN credentials with the
+youtube.force-ssl scope (see post_comment); if the stored refresh token
+lacks that scope, the comment post fails with a warning and the upload
+still stands. A failed thumbnail likewise never fails the upload
+(see set_thumbnail).
 """
 import argparse
 import json
 import os
+import subprocess
 import sys
+import tempfile
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -51,16 +56,52 @@ META = {
 }
 
 # Top-level comment posted on every uploaded video (same text for the
-# Reel and the long video, both topics). The link in a comment IS
-# clickable, so viewers get a working link to the site. The YouTube Data
+# Reel and the long video, both topics). The links in a comment ARE
+# clickable, so viewers get working links to both sites. The YouTube Data
 # API cannot pin a comment programmatically — pinning is manual in
 # YouTube Studio/app — so this is posted as a regular top-level comment
 # (it is the first comment on the video). Posting a comment needs the
 # youtube.force-ssl OAuth scope; post_comment() builds its OWN
 # credentials with that scope, so a stored token that lacks it fails
 # there (warning only) and never breaks the upload.
-COMMENT_TEXT = ("For more news, visit our website: "
-                "https://breaking-news-en.vercel.app")
+COMMENT_TEXT = ("For more news, visit our websites:\n"
+                "https://breaking-news-en.vercel.app\n"
+                "https://akhbar-ajila.vercel.app")
+
+
+def set_thumbnail(yt, vid, video_file):
+    """Set a custom thumbnail on video_id from a frame of the video.
+    Extracts one frame at ~2s with ffmpeg and uploads it via
+    thumbnails.set (~50 units from the 10,000-unit pool). Uses the same
+    `yt` client as the upload (youtube.upload scope). Never raises: any
+    failure prints a warning and returns None, so a thumbnail problem
+    can never break the upload. Returns vid on success."""
+    thumb = None
+    try:
+        fd, thumb = tempfile.mkstemp(suffix=".jpg", prefix="thumb_")
+        os.close(fd)
+        r = subprocess.run(["ffmpeg", "-y", "-ss", "2", "-i", video_file,
+                            "-vframes", "1", "-q:v", "2", thumb],
+                           capture_output=True, text=True, timeout=60)
+        if (r.returncode != 0 or not os.path.exists(thumb)
+                or os.path.getsize(thumb) < 1000):
+            raise RuntimeError(
+                f"ffmpeg frame extraction failed: {r.stderr[-300:]}")
+        yt.thumbnails().set(
+            videoId=vid,
+            media_body=MediaFileUpload(thumb, mimetype="image/jpeg")).execute()
+        print(f"THUMBNAIL SET on {vid}")
+        return vid
+    except Exception as ex:
+        print(f"WARNING: could not set thumbnail on {vid}: {ex}",
+              file=sys.stderr)
+        return None
+    finally:
+        if thumb:
+            try:
+                os.remove(thumb)
+            except OSError:
+                pass
 
 
 def post_comment(cid, csec, rtok, video_id):
@@ -184,6 +225,9 @@ def main():
     print(f"UPLOADED: {url}")
     with open(out_json, "w", encoding="utf-8") as f:
         json.dump({"video_id": vid, "url": url}, f, ensure_ascii=False, indent=2)
+    # Custom thumbnail from a frame of the video (same client/scope as
+    # the upload). A failed thumbnail never fails the upload.
+    set_thumbnail(yt, vid, args.file)
     # Website link as a top-level comment (clickable) — same for the Reel
     # and the long video. A failed comment never fails the upload.
     post_comment(cid, csec, rtok, vid)

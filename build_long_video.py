@@ -5,20 +5,18 @@ Horizontal 16:9, 1280x720, 30fps. Up to 6 stories, 30s each, with a brief
 video, assets/presenter.mp4 — the next story's narration starts over the
 presenter, then the story visuals roll) + a 30s end CTA. Total ≈230s.
 English titles, English voice (en-US-AriaNeural), English CTA.
-Modes (env LONG_TOPIC, default "islamic"):
-  islamic: real Islamic news first, then built-in English template
-    topics (rotating, generic/educational only) fill the remaining
-    slots — the mode never depends on the feeds.
-  news: the newest English news stories, real articles only.
+Modes (env STORY_MODE, default "horror"):
+  horror: built-in original horror stories (rotating).
+  anime: built-in original anime stories (rotating).
+Both modes are template-only and never depend on the feeds.
 Background music: "Serene View" by Arulo (Mixkit, royalty-free — see
 assets/MUSIC.md) is mixed under the narration at volume 0.15; if the file
 is missing the build still succeeds, voice only.
 Visuals per story (same fallback order as the Reels): pool clips/photos
 first (data/media_pool/, see build_reel.gather_visuals), then Pexels video
 clips (landscape) -> Pexels photos -> Unsplash -> Openverse -> title card.
-Audio: Islamic template narration is a fixed text, so the pool may
-already hold it (keyed by script hash — see build_reel.pool_audio); news
-narration is fresh every run and is always generated at build time.
+Audio: template narration is a fixed text, so the pool may
+already hold it (keyed by script hash — see build_reel.pool_audio).
 Free stock only, no RSS/agency visuals.
 Outputs: out/long_video.mp4 + out/long_stories.json
 """
@@ -41,25 +39,16 @@ L_VIS_SEC = 10              # seconds per visual (3 visuals x 10s = 30s)
 L_N_VIS = 3
 L_N_STORIES = 6
 EN_VOICE = "en-US-AriaNeural"
-ISLAM_TOPIC = br.ISLAM_VISUAL_TOPIC
 
 
-def fetch_long_stories(feeds, mode):
-    """Stories for the long video (islamic mode only; news mode uses
-    br.fetch_stories directly). Real stories first, templates fill the rest."""
-    try:
-        pool = br.fetch_stories(feeds, limit=60)
-    except Exception as ex:
-        print(f"feed fetch failed ({ex}) — building from templates only",
-              file=sys.stderr)
-        pool = []
-    real = [s for s in pool if br.is_islamic(s)][:L_N_STORIES]
-    need = L_N_STORIES - len(real)
-    templates = ([br.template_story(t) for t in br.pick_islam_topics(need)]
-                 if need > 0 else [])
-    print(f"Islamic mode: {len(real)} real story(ies) + "
-          f"{len(templates)} template topic(s)")
-    return real + templates
+def fetch_long_stories(mode):
+    """Stories for the long video: built-in template stories only
+    (rotating), from the list matching the mode."""
+    topics = br.HORROR_TOPICS if mode == "horror" else br.ANIME_TOPICS
+    templates = [br.template_story(t)
+                 for t in br.pick_story_topics(topics, L_N_STORIES)]
+    print(f"{mode} mode: {len(templates)} template story(ies)")
+    return templates
 
 
 def story_visuals(st, i, font, topic, pool, used, strict=False):
@@ -67,7 +56,7 @@ def story_visuals(st, i, font, topic, pool, used, strict=False):
     (build_reel.gather_visuals) — pooled clips/photos, then live Pexels
     videos (landscape), then live photos, then title card.
     strict (True): no visual is repeated within this video — now
-    used for BOTH news and Islamic videos; False keeps the old reuse
+    used for BOTH horror and anime videos; False keeps the old reuse
     fallback (no longer used).
     The live searches use the story's own keywords (br.story_keywords)
     first, so the visuals match the story being narrated.
@@ -196,47 +185,36 @@ def assemble_long(segments, out_mp4):
 
 
 def main():
-    mode = os.environ.get("LONG_TOPIC", "islamic").strip().lower()
-    if mode not in ("islamic", "news"):
-        print(f"WARNING: unknown LONG_TOPIC {mode!r}, using islamic",
+    mode = os.environ.get("STORY_MODE", "horror").strip().lower()
+    if mode not in ("horror", "anime"):
+        print(f"WARNING: unknown STORY_MODE {mode!r}, using horror",
               file=sys.stderr)
-        mode = "islamic"
+        mode = "horror"
     print(f"Long video mode: {mode}")
-    with open(os.path.join(br.BASE, "feeds.json"), encoding="utf-8") as f:
-        feeds = json.load(f)
-    if mode == "news":
-        stories = br.fetch_stories(feeds)
-        if len(stories) < L_N_STORIES:
-            print(f"WARNING: only {len(stories)} stories found", file=sys.stderr)
-        if not stories:
-            print("ERROR: no stories fetched", file=sys.stderr)
-            sys.exit(1)
-    else:
-        stories = fetch_long_stories(feeds, mode)
+    stories = fetch_long_stories(mode)
     for s in stories:
         s["topic"] = mode
 
     font = br.get_font()
     pool = br.load_pool()
     used = set()  # visuals already used in THIS video (see br.gather_visuals)
-    # strict = no-repeat applies to BOTH news and Islamic videos: no clip
+    # strict = no-repeat applies to BOTH horror and anime videos: no clip
     # or photo is repeated within one video (his order 2026-11-17).
     strict = True
     print(f"Media pool: {len(pool)} file(s)")
     print(f"Stories: {len(stories)}")
     segments = []  # dicts (see br.make_segment)
     for i, st in enumerate(stories):
-        # Islamic mode always uses Islamic visuals; news mode maps the
-        # title to its topic (English keywords).
-        topic = ISLAM_TOPIC if mode == "islamic" else br.topic_for(st["title"])
+        # Each mode uses its own fixed visual topic.
+        topic = (br.HORROR_VISUAL_TOPIC if mode == "horror"
+                 else br.ANIME_VISUAL_TOPIC)
         visuals = story_visuals(st, i, font, topic, pool, used, strict)
         title_png = os.path.join(br.ASSETS, f"l{i}_title.png")
         br.render_title_png(st["title"], title_png, font, size=64)
         # narration: title + longer summary (~30s). Template topics use
         # their script, truncated at a word boundary. Template narration is
         # a fixed text, so the pool may already hold its audio (keyed by
-        # script hash); news narration is fresh every run and is always
-        # generated here.
+        # script hash).
         audio_src = "gen"
         if st.get("template"):
             narr = br.template_narration(st, 400)
@@ -280,7 +258,7 @@ def main():
     cta_card = os.path.join(br.ASSETS, "lcta_card.jpg")
     br.make_card_image("breaking-news-en.vercel.app", cta_card, font)
     cta_title = os.path.join(br.ASSETS, "lcta_title.png")
-    br.render_title_png("For more news, visit our website", cta_title, font)
+    br.render_title_png("For more stories, visit our website", cta_title, font)
     cta_audio = os.path.join(br.ASSETS, "lcta.mp3")
     pooled_cta = br.pool_audio(br.CTA_NARR, EN_VOICE)
     if pooled_cta:

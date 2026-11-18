@@ -4,10 +4,10 @@ Horizontal 16:9, 1280x720, 30fps. Up to 6 stories, 30s each, with a brief
 4s presenter interstitial between stories (the presenter's own silent
 video, assets/presenter.mp4 — the next story's narration starts over the
 presenter, then the story visuals roll) + a 30s end CTA. Total ≈230s.
-English titles, English voice (en-US-AriaNeural), English CTA.
-Modes (env STORY_MODE, default "horror"):
-  horror: built-in original horror stories (rotating).
-  anime: built-in original anime stories (rotating).
+English titles, English voice (en-US-GuyNeural, male), English CTA.
+Modes (env STORY_MODE, default "animals"):
+  animals: built-in animal documentaries (rotating).
+  history: built-in historical stories (rotating).
 Both modes are template-only and never depend on the feeds.
 Background music: "Serene View" by Arulo (Mixkit, royalty-free — see
 assets/MUSIC.md) is mixed under the narration at volume 0.15; if the file
@@ -38,13 +38,13 @@ L_STORY_SEC = 30            # seconds per story
 L_VIS_SEC = 10              # seconds per visual (3 visuals x 10s = 30s)
 L_N_VIS = 3
 L_N_STORIES = 6
-EN_VOICE = "en-US-AriaNeural"
+EN_VOICE = "en-US-GuyNeural"
 
 
 def fetch_long_stories(mode):
     """Stories for the long video: built-in template stories only
     (rotating), from the list matching the mode."""
-    topics = br.HORROR_TOPICS if mode == "horror" else br.ANIME_TOPICS
+    topics = br.ANIMAL_TOPICS if mode == "animals" else br.HISTORY_TOPICS
     templates = [br.template_story(t)
                  for t in br.pick_batch_stories(topics, mode, L_N_STORIES)]
     print(f"{mode} mode: {len(templates)} template story(ies)")
@@ -56,7 +56,7 @@ def story_visuals(st, i, font, topic, pool, used, strict=False):
     (build_reel.gather_visuals) — pooled clips/photos, then live Pexels
     videos (landscape), then live photos, then title card.
     strict (True): no visual is repeated within this video — now
-    used for BOTH horror and anime videos; False keeps the old reuse
+    used for BOTH animal and history videos; False keeps the old reuse
     fallback (no longer used).
     The live searches use the story's own keywords (br.story_keywords)
     first, so the visuals match the story being narrated.
@@ -185,11 +185,11 @@ def assemble_long(segments, out_mp4):
 
 
 def main():
-    mode = os.environ.get("STORY_MODE", "horror").strip().lower()
-    if mode not in ("horror", "anime"):
-        print(f"WARNING: unknown STORY_MODE {mode!r}, using horror",
+    mode = os.environ.get("STORY_MODE", "animals").strip().lower()
+    if mode not in ("animals", "history"):
+        print(f"WARNING: unknown STORY_MODE {mode!r}, using animals",
               file=sys.stderr)
-        mode = "horror"
+        mode = "animals"
     print(f"Long video mode: {mode}")
     stories = fetch_long_stories(mode)
     for s in stories:
@@ -198,7 +198,7 @@ def main():
     font = br.get_font()
     pool = br.load_pool()
     used = set()  # visuals already used in THIS video (see br.gather_visuals)
-    # strict = no-repeat applies to BOTH horror and anime videos: no clip
+    # strict = no-repeat applies to BOTH animal and history videos: no clip
     # or photo is repeated within one video (his order 2026-11-17).
     strict = True
     print(f"Media pool: {len(pool)} file(s)")
@@ -206,8 +206,8 @@ def main():
     segments = []  # dicts (see br.make_segment)
     for i, st in enumerate(stories):
         # Each mode uses its own fixed visual topic.
-        topic = (br.HORROR_VISUAL_TOPIC if mode == "horror"
-                 else br.ANIME_VISUAL_TOPIC)
+        topic = (br.ANIMALS_VISUAL_TOPIC if mode == "animals"
+                 else br.HISTORY_VISUAL_TOPIC)
         visuals = story_visuals(st, i, font, topic, pool, used, strict)
         title_png = os.path.join(br.ASSETS, f"l{i}_title.png")
         br.render_title_png(st["title"], title_png, font, size=64)
@@ -258,7 +258,7 @@ def main():
     cta_card = os.path.join(br.ASSETS, "lcta_card.jpg")
     br.make_card_image("breaking-news-en.vercel.app", cta_card, font)
     cta_title = os.path.join(br.ASSETS, "lcta_title.png")
-    br.render_title_png("For more stories, visit our website", cta_title, font)
+    br.render_title_png("For more animal and history stories, visit our website", cta_title, font)
     cta_audio = os.path.join(br.ASSETS, "lcta.mp3")
     pooled_cta = br.pool_audio(br.CTA_NARR, EN_VOICE)
     if pooled_cta:

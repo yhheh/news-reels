@@ -57,17 +57,17 @@ jobs:
       # EVERY run builds BOTH a Reel and a long video, with OPPOSITE topics.
       # Alternation is by github.run_number parity (run_number increments by
       # 1 on every run of this workflow, so the two formats always swap):
-      #   even run_number -> Reel = horror, long video = anime
-      #   odd run_number  -> Reel = anime, long video = horror
+      #   even run_number -> Reel = animals, long video = history
+      #   odd run_number  -> Reel = history, long video = animals
       - name: Pick alternating modes
         id: modes
         run: |
           if [ $(( ${{ github.run_number }} % 2 )) -eq 0 ]; then
-            echo "reel_mode=horror" >> "$GITHUB_OUTPUT"
-            echo "long_mode=anime" >> "$GITHUB_OUTPUT"
+            echo "reel_mode=animals" >> "$GITHUB_OUTPUT"
+            echo "long_mode=history" >> "$GITHUB_OUTPUT"
           else
-            echo "reel_mode=anime" >> "$GITHUB_OUTPUT"
-            echo "long_mode=horror" >> "$GITHUB_OUTPUT"
+            echo "reel_mode=history" >> "$GITHUB_OUTPUT"
+            echo "long_mode=animals" >> "$GITHUB_OUTPUT"
           fi
       - name: Show modes
         run: |

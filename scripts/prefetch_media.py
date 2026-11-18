@@ -15,10 +15,10 @@ mosque"):
   12 videos per topic.
 
 AUDIO (only fixed texts can be pre-rendered):
-  For every built-in story topic (build_reel.HORROR_TOPICS and
-  build_reel.ANIME_TOPICS) the
+  For every built-in story topic (build_reel.ANIMAL_TOPICS and
+  build_reel.HISTORY_TOPICS) the
   narration is rendered once per format — Reel (220 chars) and long video
-  (400 chars) — with the English voice en-US-AriaNeural, plus the fixed end
+  (400 chars) — with the English male voice en-US-GuyNeural, plus the fixed end
   CTA. Each entry is keyed by script_hash = md5(voice + narration text):
   if a script changes, its hash changes and the audio is re-generated;
   stale hashes are deleted.
@@ -268,7 +268,7 @@ def prefetch_audio(entries):
     """Pre-render narration for every built-in story topic (both
     formats) + the fixed end CTA. Returns (rendered, skipped-already)."""
     rendered = skipped = 0
-    for t in br.HORROR_TOPICS + br.ANIME_TOPICS:
+    for t in br.ANIMAL_TOPICS + br.HISTORY_TOPICS:
         st = br.template_story(t)
         for fmt, max_chars, seconds in AUDIO_FORMATS:
             narr = br.template_narration(st, max_chars)
@@ -293,7 +293,7 @@ def prune(entries):
     """Drop stale audio (hash no longer matches any current script) and
     excess visuals (keep the newest per topic); delete their files."""
     current_hashes = {br.narration_hash(br.template_narration(br.template_story(t), mc), VOICE)
-                      for t in br.HORROR_TOPICS + br.ANIME_TOPICS for _, mc, _ in AUDIO_FORMATS}
+                      for t in br.ANIMAL_TOPICS + br.HISTORY_TOPICS for _, mc, _ in AUDIO_FORMATS}
     current_hashes.add(br.narration_hash(br.CTA_NARR, VOICE))
     keep, dropped = [], 0
     for e in entries:

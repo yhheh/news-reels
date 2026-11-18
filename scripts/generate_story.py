@@ -24,7 +24,7 @@ import requests
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT_FILE = os.path.join(BASE, "data", "generated_stories.json")
-MODEL = "gemini-2.0-flash"
+MODEL = "gemini-3.6-flash"
 N_PER_MODE = 6
 MAX_RETRIES = 3
 

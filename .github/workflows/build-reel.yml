@@ -50,6 +50,10 @@ jobs:
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
         run: python scripts/prefetch_media.py
+      - name: Generate fresh stories
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python scripts/generate_story.py
       # EVERY run builds BOTH a Reel and a long video, with OPPOSITE topics.
       # Alternation is by github.run_number parity (run_number increments by
       # 1 on every run of this workflow, so the two formats always swap):
@@ -131,3 +135,16 @@ jobs:
           FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
           FB_ACCESS_TOKEN: ${{ secrets.FB_ACCESS_TOKEN }}
         run: python upload_facebook.py --file out/long_video.mp4 --stories out/long_stories.json --mode long
+      # Cross-batch no-repeat: the builders recorded the stories used in
+      # this run in data/used_stories.json — commit it back so the next
+      # run picks fresh stories. A push to main does NOT re-trigger this
+      # workflow (it runs on schedule + dispatch only). A failed push
+      # never fails the run (the videos are already uploaded).
+      - name: Save used stories
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/used_stories.json
+          git diff --cached --quiet || git commit -m "Mark stories as used (run ${{ github.run_number }})"
+          git push || echo "WARNING: could not push used stories"

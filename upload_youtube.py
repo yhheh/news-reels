@@ -11,7 +11,7 @@ Usage (defaults = the Reel, unchanged behavior):
 --mode reel: uploads as a Short (title + " #Shorts", shorts URL).
 --mode long: uploads as a regular video (plain title, watch URL).
 Title/description/tags/category come from the stories file (first entry's
-"topic": "horror" or "anime"); the title is the first story's title,
+"topic": "animals" or "history"); the title is the first story's title,
 never a hardcoded topic string. If the stories file is missing, sensible
 English defaults are used.
 
@@ -42,18 +42,20 @@ VIDEO = os.path.join(BASE, "out", "reel.mp4")
 STORIES = os.path.join(BASE, "out", "stories.json")
 
 # Per (mode, topic): description intro, tags, category.
-# 24 = Entertainment, 1 = Film & Animation.
+# 15 = Pets & Animals, 27 = Education.
 META = {
-    ("reel", "horror"): ("A horror story in one minute.",
-                         ["horror", "scary story", "horror stories",
-                          "Shorts"], "24"),
-    ("reel", "anime"): ("An anime story in one minute.",
-                        ["anime", "anime story", "anime stories",
-                         "Shorts"], "1"),
-    ("long", "horror"): ("Horror stories in this video.",
-                         ["horror", "scary story", "horror stories"], "24"),
-    ("long", "anime"): ("Anime stories in this video.",
-                        ["anime", "anime story", "anime stories"], "1"),
+    ("reel", "animals"): ("An animal documentary in one minute.",
+                          ["animals", "wildlife", "animal documentary",
+                           "nature", "Shorts"], "15"),
+    ("reel", "history"): ("A history story in one minute.",
+                          ["history", "historical documentary",
+                           "ancient history", "Shorts"], "27"),
+    ("long", "animals"): ("Animal documentaries in this video.",
+                          ["animals", "wildlife", "animal documentary",
+                           "nature"], "15"),
+    ("long", "history"): ("History stories in this video.",
+                          ["history", "historical documentary",
+                           "ancient history"], "27"),
 }
 
 # Top-level comment posted on every uploaded video (same text for the
@@ -65,7 +67,7 @@ META = {
 # youtube.force-ssl OAuth scope; post_comment() builds its OWN
 # credentials with that scope, so a stored token that lacks it fails
 # there (warning only) and never breaks the upload.
-COMMENT_TEXT = ("For more stories, visit our websites:\n"
+COMMENT_TEXT = ("For more animal and history stories, visit our websites:\n"
                 "https://breaking-news-en.vercel.app\n"
                 "https://akhbar-ajila.vercel.app")
 
@@ -184,9 +186,9 @@ def main():
         pass
     titles = [s.get("title", "") for s in entries if s.get("title")]
     topic = (entries[0].get("topic") if entries and entries[0].get("topic")
-             else "horror")
-    if topic not in ("horror", "anime"):
-        topic = "horror"
+             else "animals")
+    if topic not in ("animals", "history"):
+        topic = "animals"
     first = (titles[0][:95] if titles else "Breaking News")
     intro, tags, category = META[(args.mode, topic)]
     if args.mode == "reel":

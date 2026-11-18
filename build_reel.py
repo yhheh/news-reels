@@ -1389,7 +1389,7 @@ def assemble_reel(segments, out_mp4):
         filters.append(f"{acat}concat=n={nseg}:v=0:a=1[aout]")
         # Background music under the voice (looped, low volume). If no
         # music file is available the build still succeeds, voice only.
-        music = get_music(mode)
+        music = get_music()
         if music:
             inputs += ["-stream_loop", "-1", "-i", music]
             music_idx = idx

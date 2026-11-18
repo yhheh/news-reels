@@ -114,7 +114,7 @@ jobs:
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
         run: python upload_youtube.py
       - name: Upload long video to YouTube
-        if: hashFiles('out/long_video.mp4') != ''
+        if: always() && hashFiles('out/long_video.mp4') != ''
         env:
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
@@ -124,13 +124,13 @@ jobs:
       # Runs AFTER YouTube; a Facebook failure never fails the workflow
       # (upload_facebook.py exits 0 with a warning on any error).
       - name: Upload Reel to Facebook
-        if: hashFiles('out/reel.mp4') != ''
+        if: always() && hashFiles('out/reel.mp4') != ''
         env:
           FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
           FB_ACCESS_TOKEN: ${{ secrets.FB_ACCESS_TOKEN }}
         run: python upload_facebook.py
       - name: Upload long video to Facebook
-        if: hashFiles('out/long_video.mp4') != ''
+        if: always() && hashFiles('out/long_video.mp4') != ''
         env:
           FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
           FB_ACCESS_TOKEN: ${{ secrets.FB_ACCESS_TOKEN }}

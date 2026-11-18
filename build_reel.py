@@ -295,6 +295,52 @@ def pick_story_topics(topics, n, seed=None):
     return [topics[(start + k) % len(topics)] for k in range(n)]
 
 
+# Cross-batch no-repeat: the titles already used, per mode, live in
+# data/used_stories.json, which is COMMITTED back to the repo by the
+# workflow after every run (see build-reel.yml "Save used stories").
+# The Actions cache cannot do this reliably: within a week, later runs
+# restore the first run's cache and their own updates are not re-saved.
+USED_STORIES_FILE = os.path.join(BASE, "data", "used_stories.json")
+
+
+def load_used_stories():
+    """Titles already used, per mode. Missing file = nothing used yet."""
+    try:
+        with open(USED_STORIES_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        return {"horror": list(data.get("horror", [])),
+                "anime": list(data.get("anime", []))}
+    except Exception:
+        return {"horror": [], "anime": []}
+
+
+def save_used_stories(used):
+    os.makedirs(os.path.dirname(USED_STORIES_FILE), exist_ok=True)
+    with open(USED_STORIES_FILE, "w", encoding="utf-8") as f:
+        json.dump(used, f, ensure_ascii=False, indent=2)
+
+
+def pick_fresh_stories(topics, mode, n):
+    """Pick n stories from `topics` that have NOT been used before in this
+    mode. The picked titles are appended to data/used_stories.json (saved
+    here; the workflow commits the file back to the repo). When fewer than
+    n fresh stories remain, the used list for that mode resets and picking
+    starts over from the full list. Returns the picked topic dicts."""
+    used = load_used_stories()
+    used_titles = set(used.get(mode, []))
+    fresh = [t for t in topics if t["title"] not in used_titles]
+    if len(fresh) < n:
+        print(f"{mode}: used list exhausted "
+              f"({len(used_titles)}/{len(topics)} used) — resetting",
+              file=sys.stderr)
+        used[mode] = []
+        fresh = list(topics)
+    picked = pick_story_topics(fresh, n)
+    used[mode] = used.get(mode, []) + [t["title"] for t in picked]
+    save_used_stories(used)
+    return picked
+
+
 # Visual search topics (stock photos/video clips). The robot
 # (scripts/prefetch_media.py) collects visuals for these topics; the
 # builders use them for the matching story segments.
@@ -1068,7 +1114,7 @@ def main():
     voice = EN_VOICE
     topics = HORROR_TOPICS if mode == "horror" else ANIME_TOPICS
     stories = [template_story(t)
-               for t in pick_story_topics(topics, N_STORIES)]
+               for t in pick_fresh_stories(topics, mode, N_STORIES)]
     print(f"{mode} mode: {len(stories)} template story(ies)")
     for s in stories:
         s["topic"] = topic_mode

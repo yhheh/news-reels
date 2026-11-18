@@ -116,3 +116,18 @@ jobs:
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
         run: python upload_youtube.py --file out/long_video.mp4 --stories out/long_stories.json --mode long
+      # Facebook auto-publishing (Page "Breaking news", permanent token).
+      # Runs AFTER YouTube; a Facebook failure never fails the workflow
+      # (upload_facebook.py exits 0 with a warning on any error).
+      - name: Upload Reel to Facebook
+        if: hashFiles('out/reel.mp4') != ''
+        env:
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          FB_ACCESS_TOKEN: ${{ secrets.FB_ACCESS_TOKEN }}
+        run: python upload_facebook.py
+      - name: Upload long video to Facebook
+        if: hashFiles('out/long_video.mp4') != ''
+        env:
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          FB_ACCESS_TOKEN: ${{ secrets.FB_ACCESS_TOKEN }}
+        run: python upload_facebook.py --file out/long_video.mp4 --stories out/long_stories.json --mode long

@@ -46,7 +46,7 @@ def fetch_long_stories(mode):
     (rotating), from the list matching the mode."""
     topics = br.HORROR_TOPICS if mode == "horror" else br.ANIME_TOPICS
     templates = [br.template_story(t)
-                 for t in br.pick_story_topics(topics, L_N_STORIES)]
+                 for t in br.pick_batch_stories(topics, mode, L_N_STORIES)]
     print(f"{mode} mode: {len(templates)} template story(ies)")
     return templates
 

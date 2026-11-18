@@ -13,9 +13,9 @@ Pixabay Videos API (PIXABAY_API_KEY) -> Pexels Videos API
 -> live photos (Pexels -> Unsplash -> Openverse, keyless) -> PIL title
 card. Video clips are real moving footage; photos fill in when fewer
 than 3 usable clips are found for a story.
-Modes (env STORY_MODE, default "horror"):
-  horror: built-in original horror stories (rotating).
-  anime: built-in original anime stories (rotating).
+Modes (env STORY_MODE, default "animals"):
+  animals: built-in animal documentaries, one animal per story (rotating).
+  history: built-in historical stories, one event per story (rotating).
 Both modes are template-only and never depend on the feeds.
 Output: out/reel.mp4
 Background music: "Serene View" by Arulo (Mixkit, royalty-free, no
@@ -71,8 +71,8 @@ POOL_INDEX = os.path.join(POOL_DIR, "pool.json")
 
 # End-CTA narration (identical in the Reel and the long video, so one pooled
 # audio file serves both). The on-screen CTA text is rendered separately.
-CTA_NARR = "For more stories, visit our website: Breaking News"
-EN_VOICE = "en-US-AriaNeural"
+CTA_NARR = "For more animal and history stories, visit our website: Breaking News"
+EN_VOICE = "en-US-GuyNeural"
 
 # Background music (Mixkit, royalty-free — see assets/MUSIC.md). Mixed UNDER
 # the narration at low volume; the voice stays dominant. The file is
@@ -80,6 +80,16 @@ EN_VOICE = "en-US-AriaNeural"
 MUSIC_VOL = 0.15
 MUSIC_PATH = os.path.join(BASE, "assets", "music.mp3")
 MUSIC_URL = "https://assets.mixkit.co/music/443/443.mp3"
+# Rotating background tracks (his order 2026-11-18: a DIFFERENT background
+# sound in every video). All four URLs verified HTTP 200 on 2026-11-18.
+# The track rotates by (run_number + mode offset), so the Reel and the
+# long video in one batch get different tracks, and every batch rotates.
+MUSIC_TRACKS = [
+    "https://assets.mixkit.co/music/443/443.mp3",    # Serene View (Arulo)
+    "https://assets.mixkit.co/music/1210/1210.mp3",
+    "https://assets.mixkit.co/music/127/127.mp3",
+    "https://assets.mixkit.co/music/130/130.mp3",
+]
 
 # Presenter interstitials (assets/presenter.mp4 — the presenter's own video,
 # supplied by the user; fictional presenter in a studio, silent clip,
@@ -214,62 +224,63 @@ def fit_text(text, max_chars):
 
 
 # Built-in story topics: each run picks topics from these lists (rotating)
-# and builds segments from them. Horror stories replace the old news mode;
-# anime stories replace the old Islamic mode. STRICT RULE: original fiction
-# only — never invent real news events, prices, release dates, or quotes.
-# Every story below is an original short tale, one per batch (rotating).
-HORROR_TOPICS = [
-    {"title": "The House on Blackwood Lane",
-     "script": "When Daniel inherited the old house on Blackwood Lane, the lawyer warned him never to go down to the basement after dark. On his first night, the lights flickered at exactly three in the morning, and a small voice called his name from below the stairs. He did not answer. The voice called again, closer this time, and it sounded exactly like his own voice when he was seven years old."},
-    {"title": "The Last Train",
-     "script": "Mara boarded the last train home, and the carriage was full, but none of the passengers had faces. The conductor walked down the aisle, punching tickets that were not there, and announced the next stop in a voice like dry leaves. The stop did not exist on any map. Mara stood up to leave, and every faceless head turned slowly toward her at the same time."},
-    {"title": "The Mirror in Room 9",
-     "script": "The hotel mirror in room nine showed a different room. In the reflection, the bed was made, the curtains were closed, and a man stood behind the guest, smiling. When Thomas turned around, the room was empty. He covered the mirror with a sheet and slept with the light on. In the morning, the sheet was folded neatly on the bed, and the mirror was waiting, clean and patient."},
-    {"title": "The Dollmaker's Daughter",
-     "script": "The dollmaker's dolls moved when no one was watching. He swore he never wound them, never touched them, yet every morning they stood in different places. The newest doll looked exactly like his daughter, who had vanished ten years ago. One night he heard tiny footsteps in the workshop, and a small voice whispered, Father, why did you make me out of wood when I was flesh?"},
-    {"title": "The Forest Whispers",
-     "script": "The fog in the forest whispered names. Hiker Jonas followed the sound of his own name, deeper and deeper between the trees, until the path disappeared behind him. The whispers grew louder, and he realised they were not calling him. They were spelling his name, letter by letter, in a voice that sounded like wind through hollow bones. He ran, but the forest had already learned the way he walked."},
-    {"title": "The Phone Call",
-     "script": "The phone rang at midnight, and the caller ID showed his own number. The voice on the other end was his own voice, and it knew everything he would do tomorrow. It told him not to take the lift, not to answer the door, not to drink the coffee. He laughed and hung up. The next morning, the lift cable snapped, someone knocked three times, and the coffee smelled faintly of something that was not coffee."},
-    {"title": "The Basement Door",
-     "script": "The basement door in the new house was locked from the inside. Every night at two in the morning, something knocked three times, polite and patient, as if it were only asking to be let in. The family stopped going downstairs. Then the knocking moved upstairs. It came from inside the walls now, three soft knocks, and last night, for the first time, it knocked from inside the bedroom closet."},
-    {"title": "The Old Photograph",
-     "script": "Elena found an old photograph in her grandmother's attic. It showed a little girl who looked exactly like her, standing in front of a house she had never visited, holding the hand of a man she had never met. On the back, in faded ink, was written: Elena, age seven, the summer we never left. Elena was six years old when the photograph was taken. She has never been seven."},
-    {"title": "The Lighthouse Keeper",
-     "script": "The lighthouse keeper logged a ship every full moon, a ship that had sunk a hundred years ago. It sailed into the harbour without a sound, its lanterns lit, its decks empty, and it waited until dawn. On the last night of his watch, the keeper saw a figure on the deck waving to him. It was himself, older, wearier, and it was pointing at the rocks below the lighthouse."},
-    {"title": "The Elevator",
-     "script": "The elevator in the old building stopped between floors, and the buttons lit up on their own, counting down from thirteen. There were only twelve floors. The doors opened onto a hallway that did not exist, carpeted in red, lit by a single flickering bulb. A woman stood at the far end, holding a suitcase. She smiled and said, I have been waiting for the lift for a very long time. Won't you come in?"},
-    {"title": "The Snowstorm Cabin",
-     "script": "Snowed in on the mountain, four friends found a cabin with the fire already lit and five plates set on the table. There were only four of them. They ate in silence, and the fifth plate stayed empty, but the food on it slowly disappeared. That night, they heard footsteps in the snow outside, circling the cabin, and a voice counted them through the door: one, two, three, four, five."},
-    {"title": "The Ventriloquist",
-     "script": "The ventriloquist's dummy spoke when his mouth was closed. It knew things he had never told it: the name of his first love, the place he had buried the money, the reason he never slept. The audience laughed, but the dummy did not laugh. It leaned close to the microphone and whispered, He thinks he is the one holding the strings. He has never once looked at his own hands."},
+# and builds segments from them. Animal documentaries replace the old
+# animal documentaries; historical stories are the second mode. STRICT RULE:
+# factual documentary narration only — real animals, real history, never
+# invented events, prices, or quotes. Every entry below is one animal or
+# one historical topic, one per batch (rotating).
+ANIMAL_TOPICS = [
+    {"title": "The Lion",
+     "script": "The lion is the king of the African savanna, and it is the only big cat that lives in a family group called a pride. A pride can have thirty lions, mostly females, who hunt together at night while the males guard the territory. Lions sleep for up to twenty hours a day, saving energy for the hunt. The male's great mane protects his neck in fights. A lion's roar is so powerful it can be heard eight kilometres away across the plains."},
+    {"title": "The Elephant",
+     "script": "The African elephant is the largest land animal on Earth, weighing as much as six tonnes. Its trunk is a miracle of nature, with forty thousand muscles, and it can pick up a single leaf or tear down a tree. Elephants never forget: they remember water holes and friends for decades. They live in close family herds led by the oldest female, and they mourn their dead, touching the bones gently with their trunks."},
+    {"title": "The Wolf",
+     "script": "Wolves are among the most loyal animals in the wild, living in family packs led by a breeding pair. A pack hunts together, chasing deer and elk for many kilometres until the prey is tired. Each wolf has a rank, and the whole pack works as one team. At night, their howls carry for miles, keeping the family together and warning other packs to stay away. A wolf can travel fifty kilometres in a single day."},
+    {"title": "The Blue Whale",
+     "script": "The blue whale is the largest animal that has ever lived on Earth, longer than three buses and heavier than two hundred cows. Its heart is the size of a small car, and its tongue alone weighs as much as an elephant. It feeds on tiny shrimp called krill, eating four tonnes of them every day in summer. Its song is the loudest sound made by any animal, travelling for hundreds of kilometres through the deep ocean."},
+    {"title": "The Dolphin",
+     "script": "Dolphins are among the most intelligent animals in the sea, with brains nearly as large as ours. They live in social groups called pods and communicate with clicks and whistles, each dolphin having its own signature whistle, like a name. They hunt fish together, herding them into tight balls, and they play for fun, surfing waves and tossing seaweed. A dolphin sleeps with one half of its brain awake, so it never stops swimming."},
+    {"title": "The Tiger",
+     "script": "The tiger is the largest of all cats, a solitary hunter that rules the forests of Asia. Its orange coat with black stripes is unique to each tiger, like a human fingerprint. A tiger can leap ten metres in a single bound and swim across wide rivers. It hunts mostly at night, using its excellent night vision, and it can eat forty kilograms of meat in one meal. Fewer than four thousand wild tigers remain today."},
+    {"title": "The Giraffe",
+     "script": "The giraffe is the tallest animal on land, standing nearly six metres high, as tall as a two-storey house. Its long neck lets it eat leaves from the tops of acacia trees that no other animal can reach. A giraffe's heart is enormous, pumping blood all the way up its long neck to its brain. It sleeps for only thirty minutes a day, mostly standing up, and a newborn calf can stand within an hour of being born."},
+    {"title": "The Panda",
+     "script": "The giant panda lives in the misty bamboo forests of the mountains of China, and it spends fourteen hours a day eating bamboo. A panda eats up to forty kilograms of bamboo daily, sitting upright and holding the stalks with a special thumb bone. Pandas are shy and solitary, and a mother raises her tiny cub, born blind and weighing only a hundred grams, in a den hidden deep in the forest. Fewer than two thousand remain in the wild."},
+    {"title": "The Great White Shark",
+     "script": "The great white shark is the ocean's most powerful hunter, growing up to six metres long. It can sense a single drop of blood in a hundred litres of water, and its three hundred teeth are arranged in rows that replace themselves throughout its life. It swims with bursts of speed up to fifty kilometres per hour, leaping clean out of the water to catch seals. Yet it is not a mindless killer: it is curious, intelligent, and vital to the ocean."},
+    {"title": "The Octopus",
+     "script": "The octopus is one of the cleverest creatures in the sea, with three hearts and blue blood. It has no bones at all, so it can squeeze through a gap the size of a coin. Its eight arms are covered in suckers that can taste what they touch. When danger comes, it changes colour in a fraction of a second, hiding in plain sight, and it can spray a cloud of black ink to escape. An octopus can solve puzzles and open jars."},
+    {"title": "The Kangaroo",
+     "script": "The kangaroo is the symbol of Australia, a marsupial that moves by hopping on powerful hind legs. It can leap nine metres in a single bound and reach speeds of seventy kilometres per hour. A mother carries her baby, called a joey, in a pouch on her belly for eight months, where it drinks milk and grows safe. Kangaroos live in groups called mobs, grazing on grass at dawn and dusk, and they can go for months without drinking water."},
+    {"title": "The Sea Turtle",
+     "script": "The sea turtle has swum the oceans for more than a hundred million years, since the time of the dinosaurs. A female returns to the very beach where she was born to lay her eggs, guided by the Earth's magnetic field across thousands of kilometres. She digs a nest in the sand and lays a hundred eggs, then swims away. The tiny hatchlings must cross the beach alone, and only one in a thousand survives to adulthood."},
 ]
 
-ANIME_TOPICS = [
-    {"title": "The Cherry Blossom Spirit",
-     "script": "Every spring, the cherry blossom tree behind the old shrine bloomed for exactly one night. Yuki met its spirit there, a girl made of petals and light, who offered her a single wish. But the wish could not be for herself. Yuki wished for her grandmother's garden to bloom again, and the next morning every tree in the village was covered in blossoms, and the spirit smiled, and was gone with the wind."},
-    {"title": "The Samurai's Last Duel",
-     "script": "The old samurai had not drawn his sword in twenty years. At dawn, he walked to the river to face his final duel, not for honour, but to protect a village that had long forgotten him. His opponent was young and fast and certain. The old man closed his eyes, remembered every lesson his master had taught him, and when the sun rose over the water, only one of them was still standing."},
-    {"title": "The Girl Who Talked to the Wind",
-     "script": "Aiko could hear the wind's stories. It told her of distant seas and faraway mountains, and one evening it whispered a warning: a great storm was coming, and it would change her town forever. Nobody believed a girl who talked to the wind. So Aiko gathered the fishermen's boats herself, tied down the market stalls, and when the storm arrived at midnight, the town was ready, because one girl had listened."},
-    {"title": "The Robot Who Dreamed",
-     "script": "In a scrapyard at the edge of the city, a small robot dreamed of the stars. Its circuits were old and its joints were rusted, but every night it looked up at the sky and imagined flying. One night a falling star answered, landing softly beside it, glowing warm and bright. The star said, I fell because I wanted to see the world. The little robot said, Then let us see it together."},
-    {"title": "The Dragon of Mount Kiri",
-     "script": "Young Kenji climbed Mount Kiri to meet the last dragon, a creature said to breathe fire and guard a mountain of gold. At the summit he found not a monster, but a small dragon hiding in a cave, trembling. It was afraid of the dark. Kenji lit a lantern and stayed with it until morning, and the dragon, who had guarded gold for a hundred years, gave him the greatest treasure it had: a friend."},
-    {"title": "The Time-Traveling Student",
-     "script": "Hana found an old clock in the school library that could rewind a single day. She used it to save her friend from a fall, and then again, and again, each time learning something new about the people around her. On the last rewind, she realised the clock was not giving her more time. It was teaching her to pay attention, because every day, lived properly, is already a gift."},
-    {"title": "The Cat Café",
-     "script": "At the end of a quiet street stood a café where the cats granted wishes to lonely customers. The price was one memory, freely given. An old man wished to see his wife's smile once more, and gave the memory of his first bicycle. A young woman wished for courage, and gave the memory of a rainy afternoon. The cats purred, the wishes came true, and the café smelled of coffee and second chances."},
-    {"title": "The Star Festival",
-     "script": "Once a year, the stars fell to earth as paper lanterns, and the children of the village ran to catch them. Ren caught one that glowed brighter than the rest, and inside it he saw his own future: a road, a mountain, a friend he had not yet met. He let the lantern go, and it rose back into the sky, because some futures are better when you walk toward them slowly, one step at a time."},
-    {"title": "The Swordsmith's Apprentice",
-     "script": "The apprentice had forged a hundred swords, and none of them was good enough. His master told him that a true sword is not made from steel, but from the heart of the one who makes it. So the boy worked through the winter, through the spring, pouring his patience and his kindness into the metal. When the sword was finished, it could cut through anything, even sorrow itself, and it never once drew blood."},
-    {"title": "The Paper Crane",
-     "script": "Mei folded a thousand paper cranes, one for each day her brother was away at sea. On the thousandth crane, her fingers trembled, and as she finished the last fold, the crane fluttered, stretched its paper wings, and came alive. It carried her message across the ocean, over the waves, to the ship where her brother stood at the rail, and when he opened his hand, the crane landed there, warm as a heartbeat."},
-    {"title": "The Moon Rabbit",
-     "script": "The rabbit on the moon had one job: to watch over the wishes of children. One night it saw a wish fading, a small light going out, because a child had stopped believing. So the rabbit descended to earth on a beam of moonlight, found the child asleep, and whispered the wish back into her dreams. In the morning, the child woke up smiling, and far above, the moon seemed just a little bit brighter."},
-    {"title": "The Ninja Academy",
-     "script": "At the ninja academy, every student was fast, silent and deadly, except for Takeshi, who was clumsy, loud and always late. On the day of the final test, the academy was attacked, and the fastest students froze. But Takeshi did the one thing no one expected: he made his friends laugh, and their laughter broke the fear, and together they drove the attackers away. His greatest skill, the master said, was the one nobody had thought to teach."},
+HISTORY_TOPICS = [
+    {"title": "The Pyramids of Egypt",
+     "script": "More than four thousand years ago, the Egyptians built the Great Pyramid of Giza, the tallest structure on Earth for nearly four thousand years. Two million stone blocks, some weighing fifteen tonnes, were hauled into place by tens of thousands of workers. It was built as a tomb for the Pharaoh Khufu, aligned perfectly with the stars. Inside, narrow passages lead to a burial chamber hidden deep in the stone. It remains the last surviving wonder of the ancient world."},
+    {"title": "The Roman Empire",
+     "script": "Two thousand years ago, Rome ruled the largest empire the ancient world had ever seen, from Britain to Egypt. Roman engineers built roads that still exist today, aqueducts that carried water for a hundred kilometres, and the Colosseum, where fifty thousand people watched gladiators fight. Roman law, language and engineering shaped Europe for centuries. At its height, one in every five people on Earth lived under Roman rule."},
+    {"title": "The Vikings",
+     "script": "A thousand years ago, the Vikings sailed from Scandinavia in long wooden ships, reaching Iceland, Greenland and even North America five hundred years before Columbus. They were fearsome warriors, but also traders, farmers and explorers. Their ships were so advanced they could cross the open ocean and sail up shallow rivers. Viking sagas tell of gods, giants and heroes, and their runes are still carved on stones across northern Europe."},
+    {"title": "The Great Wall of China",
+     "script": "The Great Wall of China is the longest structure ever built by humans, stretching more than twenty thousand kilometres across mountains and deserts. It was built over two thousand years by different dynasties to protect China from northern invaders. Millions of workers laboured on it, and the wall is wide enough for five horses to ride side by side. Today it is a symbol of China, and millions of visitors walk its ancient stones every year."},
+    {"title": "The Titanic",
+     "script": "In 1912, the Titanic was the largest ship ever built, a floating palace with grand staircases, a swimming pool and a ballroom. On its first voyage from England to America, it struck an iceberg in the icy Atlantic at night. The ship was called unsinkable, but it sank in less than three hours, and more than fifteen hundred people lost their lives. The wreck lay undiscovered on the ocean floor for seventy-three years."},
+    {"title": "The First Moon Landing",
+     "script": "On the twentieth of July, 1969, the whole world watched as Apollo 11 landed on the Moon. Neil Armstrong stepped onto the lunar surface and spoke the most famous words in history: one small step for man, one giant leap for mankind. He and Buzz Aldrin walked on the Moon for two and a half hours, collecting rocks and planting a flag, while Michael Collins waited alone in orbit above them."},
+    {"title": "Ancient Greece",
+     "script": "Ancient Greece gave the world democracy, the Olympic Games, theatre and philosophy. In Athens, citizens gathered to vote on their own laws, a radical idea that shapes our world today. Greek thinkers like Socrates, Plato and Aristotle asked questions we still debate. The Parthenon, their great temple, still stands on a hill above Athens, and the first Olympic Games were held in Greece nearly three thousand years ago."},
+    {"title": "The Samurai",
+     "script": "The samurai were the warrior class of Japan for seven hundred years, bound by a strict code of honour called bushido, the way of the warrior. They carried two swords, trained from childhood, and believed that death in battle was more honourable than a life of shame. Their swords were folded a thousand times to make steel of unmatched sharpness. Though the samurai disappeared in the nineteenth century, their code still shapes Japanese culture today."},
+    {"title": "The Aztec Empire",
+     "script": "Five hundred years ago, the Aztec Empire ruled central Mexico from its great capital, Tenochtitlan, a city built on an island in a lake, larger than London or Paris at the time. The Aztecs built floating gardens, vast temples and a calendar more accurate than Europe's. They traded gold, feathers and chocolate across their empire. In 1519, Spanish conquistadors arrived, and within two years the great empire had fallen."},
+    {"title": "The First Flight",
+     "script": "In 1903, two brothers from Ohio, Wilbur and Orville Wright, built a fragile flying machine of wood and cloth in their bicycle shop. On a cold December morning at Kitty Hawk, their aeroplane rose into the air and flew for twelve seconds, covering thirty-six metres. It was the first powered flight in history. Within a few decades, aeroplanes would cross oceans, and within sixty-six years, humans would fly to the Moon."},
+    {"title": "The Library of Alexandria",
+     "script": "Two thousand years ago, the Library of Alexandria in Egypt held the knowledge of the ancient world: hundreds of thousands of scrolls on astronomy, medicine, mathematics and poetry. Scholars from every land came to study there. The library was the greatest centre of learning the world had ever known. It was destroyed by fire, and its loss is still mourned today as one of the greatest tragedies in the history of knowledge."},
+    {"title": "The Printing Press",
+     "script": "In the fourteen-forties, Johannes Gutenberg invented the printing press in Germany, and it changed the world forever. Before him, every book was copied by hand, slowly and at great cost. With movable type, a single press could print thousands of copies. Within fifty years, millions of books were in circulation, and knowledge was no longer the privilege of the rich. The printing press lit the spark of the modern age."},
 ]
 
 
@@ -308,10 +319,10 @@ def load_used_stories():
     try:
         with open(USED_STORIES_FILE, encoding="utf-8") as f:
             data = json.load(f)
-        return {"horror": list(data.get("horror", [])),
-                "anime": list(data.get("anime", []))}
+        return {"animals": list(data.get("animals", [])),
+                "history": list(data.get("history", []))}
     except Exception:
-        return {"horror": [], "anime": []}
+        return {"animals": [], "history": []}
 
 
 def save_used_stories(used):
@@ -359,29 +370,44 @@ def load_generated_stories(mode):
 
 def pick_batch_stories(topics, mode, n):
     """Stories for one batch: prefer freshly generated stories (from
-    scripts/generate_story.py); fall back to the hardcoded lists with
-    cross-batch no-repeat tracking (pick_fresh_stories). Generated
-    stories are also recorded as used, so they are never reused."""
-    gen = load_generated_stories(mode)
+    scripts/generate_story.py); fill any remaining slots from the
+    hardcoded lists. Cross-batch no-repeat tracking applies to BOTH
+    sources (recorded in data/used_stories.json), so no story is ever
+    reused until its mode's list is exhausted (then it resets)."""
     used = load_used_stories()
     used_titles = set(used.get(mode, []))
+    # 1) fresh generated stories (not used before)
+    gen = load_generated_stories(mode)
     fresh_gen = [s for s in gen if s["title"] not in used_titles]
-    if len(fresh_gen) >= n:
-        picked = fresh_gen[:n]
-        used[mode] = used.get(mode, []) + [t["title"] for t in picked]
-        save_used_stories(used)
-        print(f"{mode}: using {n} freshly generated stories")
-        return picked
-    print(f"{mode}: only {len(fresh_gen)} fresh generated stories — "
-          f"falling back to the hardcoded list", file=sys.stderr)
-    return pick_fresh_stories(topics, mode, n)
+    picked = fresh_gen[:n]
+    n_gen = len(picked)
+    # 2) fill remaining slots from the hardcoded list (no-repeat)
+    if len(picked) < n:
+        rest = [t for t in topics
+                if t["title"] not in used_titles
+                and t["title"] not in [p["title"] for p in picked]]
+        if len(rest) < n - len(picked):
+            # used list exhausted — reset and start over
+            print(f"{mode}: used list exhausted "
+                  f"({len(used_titles)}/{len(topics)} used) — resetting",
+                  file=sys.stderr)
+            used[mode] = []
+            used_titles = set()
+            rest = [t for t in topics
+                    if t["title"] not in [p["title"] for p in picked]]
+        picked = picked + pick_story_topics(rest, n - len(picked))
+    # 3) record all picked titles as used
+    used[mode] = used.get(mode, []) + [t["title"] for t in picked]
+    save_used_stories(used)
+    print(f"{mode}: {n_gen} generated + {len(picked) - n_gen} hardcoded")
+    return picked
 
 
 # Visual search topics (stock photos/video clips). The robot
 # (scripts/prefetch_media.py) collects visuals for these topics; the
 # builders use them for the matching story segments.
-HORROR_VISUAL_TOPIC = "dark horror"
-ANIME_VISUAL_TOPIC = "anime"
+ANIMALS_VISUAL_TOPIC = "animals"
+HISTORY_VISUAL_TOPIC = "history"
 
 
 def template_story(topic):
@@ -393,11 +419,11 @@ def template_story(topic):
 # English keyword -> English stock-photo/video topic (the channel is fully
 # English now: English feeds, English titles, English voice).
 TOPICS = [
-    # Horror and anime first: these are the two story modes now. The
+    # Animals and history first: these are the two story modes now. The
     # builders use a fixed visual topic per mode, but prefetch also
     # fetches visuals for every topic in this list.
-    (["horror", "haunted", "ghost", "scary", "dark", "fear", "monster", "demon", "nightmare"], "dark horror"),
-    (["anime", "manga", "samurai", "ninja", "dragon", "spirit", "cherry blossom", "tokyo", "japan"], "anime"),
+    (["lion", "elephant", "wolf", "whale", "dolphin", "tiger", "giraffe", "panda", "shark", "octopus", "kangaroo", "turtle", "animals", "wildlife", "savanna", "ocean"], "animals"),
+    (["pyramids", "egypt", "roman", "empire", "vikings", "great wall", "china", "titanic", "moon landing", "greece", "samurai", "aztec", "flight", "library", "printing", "history", "ancient", "castle", "temple"], "history"),
     (["football", "soccer", "match", "league", "goal", "player", "championship", "cup", "tournament"], "football stadium"),
     (["economy", "dollar", "gold", "stock market", "shares", "oil", "inflation", "interest rate", "economy"], "economy money"),
     (["weather", "rain", "storm", "snow", "heatwave", "temperature", "flood"], "weather rain"),
@@ -840,17 +866,37 @@ def silent_audio(path, seconds):
         return False
 
 
-def get_music():
-    """Path to the background-music track, or None. Committed file first;
-    otherwise one download attempt from the stable Mixkit URL; if that
-    also fails, the build proceeds with voice only (never crashes)."""
-    if os.path.exists(MUSIC_PATH) and os.path.getsize(MUSIC_PATH) > 10000:
-        return MUSIC_PATH
+def music_track_url(mode):
+    """This run's background-music URL, rotating by (run_number + mode
+    offset). Offset 0 for "animals", 1 for "history": the Reel and the
+    long video in one batch always have different modes, so they always
+    get different tracks, and the run number rotates the choice."""
+    seed = story_rotation_seed()
+    off = 0 if mode == "animals" else 1
+    return MUSIC_TRACKS[(seed + off) % len(MUSIC_TRACKS)]
+
+
+def get_music(mode=None):
+    """Path to this run's background-music track, or None. Downloads the
+    rotating track to out/assets/music_<n>.mp3 (cached between runs);
+    falls back to the committed music.mp3; if that also fails, the build
+    proceeds with voice only (never crashes). `mode` defaults to the
+    STORY_MODE env var, so the long-video builder (which calls this
+    without an argument) gets its own mode's track."""
+    if mode is None:
+        mode = os.environ.get("STORY_MODE", "animals").strip().lower()
+    url = music_track_url(mode)
+    idx = MUSIC_TRACKS.index(url)
+    path = os.path.join(ASSETS, f"music_{idx}.mp3")
+    if os.path.exists(path) and os.path.getsize(path) > 10000:
+        return path
     try:
-        if download(MUSIC_URL, MUSIC_PATH, min_bytes=10000):
-            return MUSIC_PATH
+        if download(url, path, min_bytes=10000):
+            return path
     except Exception as ex:
         print(f"music download failed: {ex}", file=sys.stderr)
+    if os.path.exists(MUSIC_PATH) and os.path.getsize(MUSIC_PATH) > 10000:
+        return MUSIC_PATH
     return None
 
 
@@ -959,7 +1005,7 @@ def pool_pick(pool, topic, kind, orientation, n, used, strict=False):
     live-fetch result, so the key check keeps the same clip from being
     picked twice in one video. strict=True: return ONLY
     fresh entries, never fall back to already-used ones (now used for
-    BOTH horror and anime videos). strict=False: fresh first, then
+    BOTH animal and history videos). strict=False: fresh first, then
     stale as fallback (old behaviour, no longer used by the builders)."""
     cands = [e for e in pool
              if e.get("topic") == topic and e.get("kind") == kind]
@@ -1019,7 +1065,7 @@ def gather_visuals(pool, topic, prefix, n, orientation, used, font, story_title,
     strict=True: never repeat a visual in this video — if a
     story still has fewer than n visuals, the remaining slots are filled
     with a generated title card, never by repeating visuals[0] (now
-    used for BOTH horror and anime videos).
+    used for BOTH animal and history videos).
     strict=False: the old reuse fallback is kept (no longer used).
     query: specific story keywords (see story_keywords), may be "".
     Live searches try the specific query FIRST, then the broad `topic`
@@ -1135,20 +1181,20 @@ def gather_visuals(pool, topic, prefix, n, orientation, used, font, story_title,
 
 def main():
     # The channel is fully English: English titles, English voice
-    # (en-US-AriaNeural), English on-screen text and CTA in both modes.
-    # Modes (env STORY_MODE, default "horror"):
-    #   horror: built-in original horror stories (rotating).
-    #   anime: built-in original anime stories (rotating).
+    # (en-US-GuyNeural, male), English on-screen text and CTA in both modes.
+    # Modes (env STORY_MODE, default "animals"):
+    #   animals: built-in animal documentaries (rotating).
+    #   history: built-in historical stories (rotating).
     # Both modes are template-only — they never depend on the feeds, so
     # they always yield a complete Reel.
-    mode = os.environ.get("STORY_MODE", "horror").strip().lower()
-    if mode not in ("horror", "anime"):
-        print(f"WARNING: unknown STORY_MODE {mode!r}, using horror",
+    mode = os.environ.get("STORY_MODE", "animals").strip().lower()
+    if mode not in ("animals", "history"):
+        print(f"WARNING: unknown STORY_MODE {mode!r}, using animals",
               file=sys.stderr)
-        mode = "horror"
+        mode = "animals"
     topic_mode = mode
     voice = EN_VOICE
-    topics = HORROR_TOPICS if mode == "horror" else ANIME_TOPICS
+    topics = ANIMAL_TOPICS if mode == "animals" else HISTORY_TOPICS
     stories = [template_story(t)
                for t in pick_batch_stories(topics, mode, N_STORIES)]
     print(f"{mode} mode: {len(stories)} template story(ies)")
@@ -1159,8 +1205,8 @@ def main():
     pool = load_pool()
     used = set()  # visuals already used in THIS video, by local path and
     # by "provider:provider_id" key (see gather_visuals) — no clip/photo
-    # is ever repeated within one video (horror and anime alike).
-    # strict = no-repeat applies to BOTH horror and anime videos: no clip
+    # is ever repeated within one video (animals and history alike).
+    # strict = no-repeat applies to BOTH animal and history videos: no clip
     # or photo is repeated within one video (his order 2026-11-17).
     strict = True
     print(f"Media pool: {len(pool)} file(s)")
@@ -1168,8 +1214,8 @@ def main():
     segments = []  # dicts (see make_segment)
     for i, st in enumerate(stories):
         # Each mode uses its own fixed visual topic.
-        topic = (HORROR_VISUAL_TOPIC if mode == "horror"
-                 else ANIME_VISUAL_TOPIC)
+        topic = (ANIMALS_VISUAL_TOPIC if mode == "animals"
+                 else HISTORY_VISUAL_TOPIC)
         # Specific visual query from the story itself, so the clips/photos
         # match the story being narrated, not just its broad topic.
         sq = story_keywords(st["title"], st.get("desc", ""))
@@ -1248,7 +1294,7 @@ def main():
     print(f"DONE: {out_mp4} ({size/1e6:.1f} MB)")
     with open(os.path.join(OUT, "stories.json"), "w", encoding="utf-8") as f:
         json.dump([{"title": s["title"], "link": s["link"],
-                    "topic": s.get("topic", "horror"),
+                    "topic": s.get("topic", "animals"),
                     "template": bool(s.get("template"))} for s in stories],
                   f, ensure_ascii=False, indent=2)
 
@@ -1343,7 +1389,7 @@ def assemble_reel(segments, out_mp4):
         filters.append(f"{acat}concat=n={nseg}:v=0:a=1[aout]")
         # Background music under the voice (looped, low volume). If no
         # music file is available the build still succeeds, voice only.
-        music = get_music()
+        music = get_music(mode)
         if music:
             inputs += ["-stream_loop", "-1", "-i", music]
             music_idx = idx

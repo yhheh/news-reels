@@ -9,7 +9,7 @@ Usage (defaults = the Reel, unchanged behavior):
       --stories out/long_stories.json --mode long
 
 Title/description come from the stories file (first entry's "topic":
-"horror" or "anime"); the title is the first story's title, never a
+"animals" or "history"); the title is the first story's title, never a
 hardcoded topic string. If the stories file is missing, sensible
 English defaults are used.
 
@@ -33,10 +33,10 @@ GRAPH_VERSION = "v21.0"
 
 # Per (mode, topic): description intro.
 META = {
-    ("reel", "horror"): "A horror story in one minute.",
-    ("reel", "anime"): "An anime story in one minute.",
-    ("long", "horror"): "Horror stories in this video.",
-    ("long", "anime"): "Anime stories in this video.",
+    ("reel", "animals"): "An animal documentary in one minute.",
+    ("reel", "history"): "A history story in one minute.",
+    ("long", "animals"): "Animal documentaries in this video.",
+    ("long", "history"): "History stories in this video.",
 }
 
 
@@ -73,15 +73,15 @@ def main():
         pass
     titles = [s.get("title", "") for s in entries if s.get("title")]
     topic = (entries[0].get("topic") if entries and entries[0].get("topic")
-             else "horror")
-    if topic not in ("horror", "anime"):
-        topic = "horror"
+             else "animals")
+    if topic not in ("animals", "history"):
+        topic = "animals"
     first = (titles[0][:95] if titles else "Breaking News")
     intro = META[(args.mode, topic)]
     desc_lines = [intro, ""]
     for t in titles:
         desc_lines.append("• " + t)
-    desc_lines += ["", "For more stories, visit our website:",
+    desc_lines += ["", "For more animal and history stories, visit our website:",
                    "https://breaking-news-en.vercel.app",
                    "https://akhbar-ajila.vercel.app",
                    "", "Breaking news"]

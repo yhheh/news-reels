@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Generate fresh horror + anime stories with the Gemini API (free tier).
+"""Generate fresh animal + history stories with the Gemini API (free tier).
 Runs at the start of each workflow run, BEFORE the builders, so every
 batch gets stories that were written just now — never repeats from a
 hardcoded list.
 
 Reads GEMINI_API_KEY from the environment (GitHub Secret). Generates 6
-horror + 6 anime stories (one batch worth) and writes them to
-data/generated_stories.json: {"horror": [...], "anime": [...]} — each a
-{title, script} dict, script ~70-90 words, English, original fiction.
+animals + 6 history stories (one batch worth) and writes them to
+data/generated_stories.json: {"animals": [...], "history": [...]} — each a
+{title, script} dict, script ~70-90 words, English, factual documentary
+narration about a real animal or a real historical topic.
 
 The builders prefer these generated stories over the hardcoded lists
-(see build_reel.pick_generated / build_long_video). If the key is missing
+(see build_reel.pick_batch_stories). If the key is missing
 or generation fails, this script exits 0 WITHOUT writing the file, and
 the builders fall back to the hardcoded lists — a story-generation
 failure never breaks the run.
@@ -28,25 +29,28 @@ N_PER_MODE = 6
 MAX_RETRIES = 3
 
 PROMPTS = {
-    "horror": (
-        "Write one original horror short story in English. "
-        "Return ONLY a JSON object with two keys: \"title\" (a short, "
-        "evocative title, 2-7 words) and \"script\" (the story itself, "
-        "70-90 words, atmospheric and scary, with a twist ending). "
-        "The story must be completely original — do not retell any famous "
-        "story, film, or urban legend. No real people, no real places. "
-        "Write in a clear, vivid style suitable for voice narration."
+    "animals": (
+        "Write one animal documentary segment in English about ONE real "
+        "animal. Return ONLY a JSON object with two keys: \"title\" (the "
+        "animal's name, e.g. \"The Red Panda\", 2-5 words) and \"script\" "
+        "(the documentary narration, 70-90 words, about how this animal "
+        "lives: its habitat, what it eats, how it hunts or survives, and "
+        "one surprising fact). Use only true, well-known facts — never "
+        "invent facts, numbers, or behaviours. Choose an animal that is "
+        "visually distinctive and well known, so stock photos and videos "
+        "of it exist. Write in a clear, vivid documentary style suitable "
+        "for voice narration."
     ),
-    "anime": (
-        "Write one original anime-style short story in English. "
-        "Return ONLY a JSON object with two keys: \"title\" (a short, "
-        "evocative title, 2-7 words) and \"script\" (the story itself, "
-        "70-90 words, warm and imaginative, with a gentle lesson or a "
-        "hopeful ending). Themes may include friendship, courage, nature, "
-        "spirits, samurai, robots, magic, or everyday wonder. "
-        "The story must be completely original — do not retell any famous "
-        "anime, manga, or film. No real people. "
-        "Write in a clear, vivid style suitable for voice narration."
+    "history": (
+        "Write one historical documentary segment in English about ONE real "
+        "historical topic, event, or place. Return ONLY a JSON object with "
+        "two keys: \"title\" (the topic, e.g. \"The Colosseum\", 2-7 words) "
+        "and \"script\" (the documentary narration, 70-90 words, telling "
+        "what it was, when it happened, and why it matters). Use only "
+        "true, well-known facts — never invent dates, numbers, or quotes. "
+        "Choose a topic with famous visible landmarks or scenes, so stock "
+        "photos and videos of it exist. Write in a clear, vivid "
+        "documentary style suitable for voice narration."
     ),
 }
 
@@ -91,8 +95,8 @@ def main():
         print("WARNING: no GEMINI_API_KEY — skipping story generation "
               "(builders will use the hardcoded lists)", file=sys.stderr)
         return 0
-    result = {"horror": [], "anime": []}
-    for mode in ("horror", "anime"):
+    result = {"animals": [], "history": []}
+    for mode in ("animals", "history"):
         print(f"Generating {N_PER_MODE} {mode} stories ...")
         for _ in range(N_PER_MODE):
             story = generate_one(mode, api_key)
@@ -102,7 +106,7 @@ def main():
                                           for s in result[mode]]:
                     result[mode].append(story)
         print(f"{mode}: {len(result[mode])}/{N_PER_MODE} generated")
-    if not result["horror"] and not result["anime"]:
+    if not result["animals"] and not result["history"]:
         print("WARNING: no stories generated — builders will use the "
               "hardcoded lists", file=sys.stderr)
         return 0
